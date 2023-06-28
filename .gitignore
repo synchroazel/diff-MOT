@@ -19,3 +19,5 @@ Mambaforge-Linux-x86_64.sh
 *.tar
 
 README_.md
+data/**
+.idea/
