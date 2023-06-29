@@ -2,6 +2,7 @@ import torch
 
 
 def get_best_device():
+	"""Function used to get the best device between cuda, mps and cpu"""
 	if torch.cuda.is_available():
 		print("[INFO] Using CUDA.")
 		return torch.device("cuda")

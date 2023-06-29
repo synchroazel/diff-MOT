@@ -12,104 +12,108 @@ from encoders import ImgEncoder
 
 
 class MotTrack:
+    """Class used for Multiple Object Tracking"""
 
-	def __init__(self, track_path):
-		self.track_dir = track_path
-		self.det_file = os.path.join(self.track_dir, "det", "det.txt")
-		self.img_dir = os.path.join(self.track_dir, "img1")
-		self.detections = self._read_detections()
-		self.img_encoder = ImgEncoder("resnet50")
+    def __init__(self, track_path, detection_file_name="det.txt",
+                 image_directory="img1",
+                 image_encoder_network="resnet50"):
+        self.track_dir = track_path
+        self.det_file = os.path.join(self.track_dir, "det", detection_file_name)
+        self.img_dir = os.path.join(self.track_dir, image_directory)
+        self.detections = self._read_detections()
+        self.img_encoder = ImgEncoder(image_encoder_network)
 
-	def _read_detections(self):
+    def _read_detections(self, delimiter=",", columns=(0, 2, 3, 4, 5)) -> dict:
+        """Read detections into a dictionary """
 
-		file = np.loadtxt(self.det_file, delimiter=",", usecols=(0, 2, 3, 4, 5))
+        file = np.loadtxt(self.det_file, delimiter=delimiter, usecols=columns)
 
-		dets = {}
-		for det in file:
-			frame = int(det[0])
-			if frame not in dets:
-				dets[frame] = []
-			dets[frame].append(det[1:].tolist())
+        dets = {}
+        for det in file:
+            frame = int(det[0])
+            if frame not in dets:
+                dets[frame] = []
+            dets[frame].append(det[1:].tolist())
 
-		return dets
+        return dets
 
-	def get_graph(self, limit=None):
+    def get_graph(self, limit=None):
 
-		track_enc_dets = []  # all encoded detections across all frames
+        track_enc_dets = []  # all encoded detections across all frames
 
-		pbar = tqdm(
-			sorted(os.listdir(self.img_dir))
-		)
+        pbar = tqdm(
+            sorted(os.listdir(self.img_dir))
+        )
 
-		i = 0  # frame counter
+        i = 0  # frame counter
 
-		for image in pbar:
+        for image in pbar:
 
-			pbar.set_description(f"Processing frame #{i} ({image})")
+            pbar.set_description(f"Processing frame #{i} ({image})")
 
-			image = Image.open(os.path.join(self.img_dir, image))
+            image = Image.open(os.path.join(self.img_dir, image))
 
-			frame_enc_dets = []  # all encoded detections in the current frame
+            frame_enc_dets = []  # all encoded detections in the current frame
 
-			for j, bbox in enumerate(self.detections[i + 1]):
-				bbox = box_convert(torch.tensor(bbox), "xywh", "xyxy").tolist()
+            for j, bbox in enumerate(self.detections[i + 1]):
+                bbox = box_convert(torch.tensor(bbox), "xywh", "xyxy").tolist()
 
-				det_image = image.crop(bbox)
+                det_image = image.crop(bbox)
 
-				frame_enc_dets.append(
-					self.img_encoder(det_image)
-				)
+                frame_enc_dets.append(
+                    self.img_encoder(det_image)
+                )
 
-			# print(f"[INFO] {len(frame_enc_dets)} encoded detections in frame #{i}")
+            # print(f"[INFO] {len(frame_enc_dets)} encoded detections in frame #{i}")
 
-			track_enc_dets.append(frame_enc_dets)
+            track_enc_dets.append(frame_enc_dets)
 
-			if i + 1 == limit:
-				break
+            if i + 1 == limit:
+                break
 
-			i += 1
+            i += 1
 
-		n_nodes = [len(frame_dets) for frame_dets in track_enc_dets]
-		n_sum = [0] + np.cumsum(n_nodes).tolist()
-		edge_index = []
-		for i in range(len(track_enc_dets) - 1):
-			for j in range(len(track_enc_dets[i])):
-				for k in range(len(track_enc_dets[i + 1])):
-					edge_index.append([
-						j + n_sum[i],
-						k + np.cumsum(n_nodes[:i + 1])[-1]
-					])
-					edge_index.append([
-						k + np.cumsum(n_nodes[:i + 1])[-1],
-						j + n_sum[i]
-					])
+        n_nodes = [len(frame_dets) for frame_dets in track_enc_dets]
+        n_sum = [0] + np.cumsum(n_nodes).tolist()
+        edge_index = []
+        for i in range(len(track_enc_dets) - 1):
+            for j in range(len(track_enc_dets[i])):
+                for k in range(len(track_enc_dets[i + 1])):
+                    edge_index.append([
+                        j + n_sum[i],
+                        k + np.cumsum(n_nodes[:i + 1])[-1]
+                    ])
+                    edge_index.append([
+                        k + np.cumsum(n_nodes[:i + 1])[-1],
+                        j + n_sum[i]
+                    ])
 
-		print(f"[INFO] {len(edge_index)} total edges")
+        print(f"[INFO] {len(edge_index)} total edges")
 
-		track_enc_dets = [item.cpu().numpy()
-						  for sublist in track_enc_dets
-						  for item in sublist]
+        track_enc_dets = [item.cpu().numpy()
+                          for sublist in track_enc_dets
+                          for item in sublist]
 
-		# Create a pytorch geometric data object
+        # Create a pytorch geometric data object
 
-		graph = pyg_data.Data(
-			x=torch.tensor(track_enc_dets),
-			edge_index=torch.tensor(edge_index).t().contiguous()
-		)
+        graph = pyg_data.Data(
+            x=torch.tensor(track_enc_dets),
+            edge_index=torch.tensor(edge_index).t().contiguous()
+        )
 
-		return graph, n_nodes
+        return graph, n_nodes
 
 
 class MotDataset(Dataset):
 
-	def __init__(self, dataset_path, split):
-		self.dataset_dir = dataset_path
-		self.split = split
+    def __init__(self, dataset_path, split):
+        self.dataset_dir = dataset_path
+        self.split = split
 
-		assert split in os.listdir(self.dataset_dir), \
-			f"Split must be one of {os.listdir(self.dataset_dir)}."
+        assert split in os.listdir(self.dataset_dir), \
+            f"Split must be one of {os.listdir(self.dataset_dir)}."
 
-		self.tracklist = os.listdir(os.path.join(self.dataset_dir, split))
+        self.tracklist = os.listdir(os.path.join(self.dataset_dir, split))
 
-	def __getitem__(self, item):
-		return MotTrack(os.path.join(self.dataset_dir, self.split, self.tracklist[item]))
+    def __getitem__(self, item):
+        return MotTrack(os.path.join(self.dataset_dir, self.split, self.tracklist[item]))
