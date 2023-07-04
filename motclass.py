@@ -203,7 +203,7 @@ class MotDataset(Dataset):
 				 split,
 				 detection_file_name="det.txt",
 				 images_directory="img1",
-				 det_resize=(1000, 1000),
+				 det_resize=(1500, 800),
 				 linkage_type=0,
 				 device="cpu"):
 		self.dataset_dir = dataset_path
