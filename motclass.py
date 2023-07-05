@@ -2,9 +2,9 @@ import os
 
 import numpy as np
 import torch
-import torch_geometric.data as pyg_data
 from PIL import Image
 from torch.utils.data import Dataset
+from torchvision import transforms
 from torchvision.ops import box_convert
 from tqdm import tqdm
 
@@ -29,7 +29,7 @@ class MotTrack:
 		self.n_nodes = None
 
 	def _read_detections(self, delimiter=",", columns=(0, 2, 3, 4, 5)) -> dict:
-		"""Read detections into a dictionary """
+		"""Read detections into a dictionary"""
 
 		file = np.loadtxt(self.det_file, delimiter=delimiter, usecols=columns)
 
@@ -42,7 +42,7 @@ class MotTrack:
 
 		return dets
 
-	def get_graph(self, limit=None):
+	def get_data(self, limit=None):
 
 		#
 		# DETECTIONS EXTRACTION section
@@ -69,6 +69,7 @@ class MotTrack:
 
 				detection = image.crop(bbox)
 				detection = detection.resize(self.det_resize)
+				detection = transforms.PILToTensor()(detection)
 
 				# Scale the bbox coordinates to the new image size
 				bbox[0] *= self.det_resize[0] / image.size[0]
@@ -98,6 +99,15 @@ class MotTrack:
 							 for sublist in track_detections
 							 for item in sublist]
 
+		track_detections_ = torch.stack(track_detections_).to(self.device)
+
+		# List with the frame number of each detection
+		frame_times = [i
+					   for i in range(len(track_detections))
+					   for _ in range(len(track_detections[i]))]
+
+		frame_times = torch.tensor(frame_times).to(self.device)
+
 		#
 		# NODE LINKAGE section
 		#
@@ -114,7 +124,8 @@ class MotTrack:
 		# Cumulative sum of the number of nodes per frame, used in the building of edge_index
 		n_sum = [0] + np.cumsum(self.n_nodes).tolist()
 
-		if self.linkage_type == 0:  # LINKAGE Type No.0
+		# LINKAGE Type No.0
+		if self.linkage_type == 0:
 
 			#   Connect ADJACENT frames detections
 			#   Edge features:
@@ -142,7 +153,8 @@ class MotTrack:
 							j + n_sum[i]
 						])
 
-		elif self.linkage_type == 1:  # LINKAGE Type No.1
+		# LINKAGE Type No.1
+		elif self.linkage_type == 1:
 
 			#   Connect frames detections with ALL detections from different frames
 			#   Edge features:
@@ -171,29 +183,29 @@ class MotTrack:
 								j + n_sum[i]
 							])
 
+		# Convert the edge attributes list to a tensor
+		edge_attr = torch.stack(edge_attr)
+
+		# Prepare the edge index tensor for pytorch geometric
+		edge_index = torch.tensor(edge_index)  # .t().contiguous()
+
 		print(f"[INFO] {len(edge_index)} total edges")
 
 		#
-		# GRAPH CREATION section
+		# OUTPUT section
 		#
 
-		node_feats = track_detections_
-		edge_attr = torch.stack(edge_attr)
-		edge_index = torch.tensor(edge_index).t().contiguous()
+		# graph = pyg_data.Data(
+		# 	detections=track_detections_,
+		# 	num_nodes=track_detections_.shape[0],
+		# 	times=frame_times,
+		# 	edge_index=edge_index,
+		# 	edge_attr=edge_attr,
+		# )
+		#
+		# return graph
 
-		# List with the frame number of each detection
-		frame_times = [i
-					   for i in range(len(track_detections))
-					   for _ in range(len(track_detections[i]))]
-
-		graph = pyg_data.Data(
-			detections=node_feats,
-			times=frame_times,
-			edge_index=edge_index,
-			edge_attr=edge_attr
-		)
-
-		return graph
+		return edge_index, track_detections_, frame_times, edge_attr
 
 
 class MotDataset(Dataset):
@@ -203,7 +215,7 @@ class MotDataset(Dataset):
 				 split,
 				 detection_file_name="det.txt",
 				 images_directory="img1",
-				 det_resize=(1500, 800),
+				 det_resize=None,
 				 linkage_type=0,
 				 device="cpu"):
 		self.dataset_dir = dataset_path
@@ -219,11 +231,32 @@ class MotDataset(Dataset):
 
 		self.tracklist = os.listdir(os.path.join(self.dataset_dir, split))
 
+		if self.det_resize is None:
+			self.det_resize = self._get_avg_size()
+
+	def _get_avg_size(self):
+
+		width = list()
+		height = list()
+
+		for track in self:
+			for f in os.listdir(track.img_dir):
+				im = Image.open(os.path.join(track.img_dir, f))
+				width.append(im.size[0])
+				height.append(im.size[1])
+
+		return tuple([
+			int(np.mean(width)),
+			int(np.mean(height))
+		])
+
 	def __getitem__(self, item):
 		track_path = os.path.join(self.dataset_dir, self.split, self.tracklist[item])
-		return MotTrack(track_path,
-						self.detection_file_name,
-						self.images_directory,
-						self.det_resize,
-						self.linkage_type,
-						self.device)
+		track_obj = MotTrack(track_path,
+							 self.detection_file_name,
+							 self.images_directory,
+							 self.det_resize,
+							 self.linkage_type,
+							 self.device)
+
+		return track_obj  # .get_data()
