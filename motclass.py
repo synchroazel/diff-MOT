@@ -208,11 +208,11 @@ class MotTrack:
         # # # # # #
 
         # graph = pyg_data.Data(
-        # 	detections=track_detections_,
-        # 	num_nodes=track_detections_.shape[0],
-        # 	times=frame_times,
-        # 	edge_index=edge_index,
-        # 	edge_attr=edge_attr,
+        #     detections=flattened_node_features,
+        #     num_nodes=flattened_node_features.shape[0],
+        #     times=frame_times,
+        #     edge_index=adjacency_matrix,
+        #     edge_attr=edge_attr,
         # )
         #
         # return graph
