@@ -15,7 +15,7 @@ from utilities import minkowski_distance
 
 LINKAGE_TYPES = {
     "ADJACENT": 0,
-    "ALL": 1
+    "ALL": -1
 }
 
 
@@ -80,7 +80,7 @@ def build_graph(adjacency_list: torch.Tensor,
 
     for batch_idx in pbar:
 
-        batch_edge_differences = torch.zeros(node_features.shape[1]).to(device)
+        batch_edge_differences = torch.zeros(node_features.shape[1]).to(device).to(torch.float16)
 
         # A batch example:
         #
@@ -95,16 +95,17 @@ def build_graph(adjacency_list: torch.Tensor,
             node1 = node_features[adjacency_list[(batch_idx * batch_size) + i][0]]
             node2 = node_features[adjacency_list[(batch_idx * batch_size) + i][1]]
 
-            difference = node1 - node2
+            difference = (node1 - node2).to(torch.float16)
 
             batch_edge_differences = torch.vstack((batch_edge_differences, difference))
             batch_edge_differences = torch.vstack((batch_edge_differences, difference))
 
         batch_edge_differences = batch_edge_differences[1:, :]
-        all_edge_differences.append(batch_edge_differences)
+        all_edge_differences.append(batch_edge_differences.cpu())
 
     # print("all_edge_differences len:", len(all_edge_differences))
     # print("its content shape:", all_edge_differences[0].shape)
+
 
     all_edge_differences = torch.vstack(all_edge_differences)
 
@@ -133,13 +134,13 @@ class MotTrack:
                  detection_file_name: str,
                  images_directory: str,
                  det_resize: tuple,
-                 linkage_type: str,
+                 linkage_window: int,
                  device: str):
         self.track_dir = track_path
         self.det_file = os.path.normpath(os.path.join(self.track_dir, "det", detection_file_name))
         self.img_dir = os.path.normpath(os.path.join(self.track_dir, images_directory))
         self.det_resize = det_resize
-        self.linkage_type = LINKAGE_TYPES[linkage_type]
+        self.linkage_window = linkage_window
         self.detections = self._read_detections()
         self.device = device
         self.n_nodes = None  # will be a list of int
@@ -268,7 +269,7 @@ class MotTrack:
         n_sum = [0] + np.cumsum(self.n_nodes).tolist()
 
         # LINKAGE Type No.0: ADJACENT
-        if self.linkage_type == 0:
+        if self.linkage_window == LINKAGE_TYPES["ADJACENT"]:
 
             #   Connect ADJACENT frames detections
             #   Edge features:
@@ -305,21 +306,21 @@ class MotTrack:
                         pass  # debug
 
         # LINKAGE Type No.1
-        elif self.linkage_type == 1:
+        elif self.linkage_window == LINKAGE_TYPES["ALL"]:
 
             #   Connect frames detections with ALL detections from different frames
             #   Edge features:
             #   - pairwise detections centers distance
             #   - pairwise detections time distance (frames)
 
-            for i in tqdm(range(len(track_detections)), desc="Building edge attributes"):
-                for j in range(len(track_detections[i])):
-                    for k in range(len(track_detections)):
+            for i in tqdm(range(len(track_detections)), desc="Building edge attributes"): # for each frame in the track
+                for j in range(len(track_detections[i])): # for each detection of that frame (i)
+                    for k in range(len(track_detections)): # for each frame in the track
 
-                        if k == i:
+                        if k <= i:
                             continue  # skip same frame detections
 
-                        for l in range(len(track_detections[k])):
+                        for l in range(len(track_detections[k])): # for each detection of the frame (k)
                             center_distance = torch.tensor([
                                 minkowski_distance(
                                     [track_detections_centers[i][j][0],
@@ -333,13 +334,49 @@ class MotTrack:
                             edge_attr.append(center_distance)
 
                             adjacency_list.append([
-                                j + n_sum[i],
-                                l + n_sum[k]
+                                # np.ushort(j + n_sum[i]),
+                                # np.ushort(l + n_sum[k])
+                                j + n_sum[i], l + n_sum[k]
                             ])
                             adjacency_list.append([
-                                l + n_sum[k],
-                                j + n_sum[i]
+                                # np.ushort(l + n_sum[k]),
+                                # np.ushort(j + n_sum[i])
+                                l + n_sum[k], j + n_sum[i]
                             ])
+        else: # Linkage window
+            for i in tqdm(range(len(track_detections)), desc="Building edge attributes"): # for each frame in the track
+                for j in range(len(track_detections[i])): # for each detection of that frame (i)
+                    for k in range(len(track_detections)): # for each frame in the track
+
+                        if k <= i:
+                            continue  # skip same frame detections
+                        if k > i + self.linkage_window:
+                            break
+
+                        for l in range(len(track_detections[k])): # for each detection of the frame (k)
+                            center_distance = torch.tensor([
+                                minkowski_distance(
+                                    [track_detections_centers[i][j][0],
+                                     track_detections_centers[i][j][1]],
+                                    [track_detections_centers[k][l][0],
+                                     track_detections_centers[k][l][1]],
+                                    distance_power)
+                            ])
+
+                            edge_attr.append(center_distance)
+                            edge_attr.append(center_distance)
+
+                            adjacency_list.append([
+                                # np.ushort(j + n_sum[i]),
+                                # np.ushort(l + n_sum[k])
+                                j + n_sum[i], l + n_sum[k]
+                            ])
+                            adjacency_list.append([
+                                # np.ushort(l + n_sum[k]),
+                                # np.ushort(j + n_sum[i])
+                                l + n_sum[k], j + n_sum[i]
+                            ])
+
 
         # Convert the edge attributes list to a tensor
         edge_attr = torch.stack(edge_attr)
@@ -366,7 +403,7 @@ class MotDataset(Dataset):
                  detection_file_name="det.txt",
                  images_directory="img1",
                  det_resize=None,
-                 linkage_type="ADJACENT",
+                 linkage_window=0,
                  device="cpu"):
         self.dataset_dir = dataset_path
         self.split = split
@@ -374,7 +411,7 @@ class MotDataset(Dataset):
         self.images_directory = images_directory
         self.det_resize = det_resize
         self.device = device
-        self.linkage_type = linkage_type
+        self.linkage_window = linkage_window
 
         assert split in os.listdir(self.dataset_dir), \
             f"Split must be one of {os.listdir(self.dataset_dir)}."
@@ -387,7 +424,7 @@ class MotDataset(Dataset):
                              self.detection_file_name,
                              self.images_directory,
                              self.det_resize,
-                             self.linkage_type,
+                             self.linkage_window,
                              self.device)
 
         return track_obj  # .get_data()
