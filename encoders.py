@@ -1,9 +1,7 @@
 """This file contains the class ImgEncoder, which will be used to encode an image into a set of features"""
 import torch
-import torch.nn as nn
-import torchvision.models as models
-from torch.autograd import Variable
-from torchvision import transforms
+from efficientnet_pytorch import EfficientNet
+from torchvision import models
 
 
 class ImgEncoder:
@@ -12,19 +10,36 @@ class ImgEncoder:
     Takes in an image and model name from torchvision.models and returns a feature vector.
     """
 
-    def __init__(self, model_name: str, device: str):
-        self.model = models.__dict__[model_name]()
-        self.model.fc = nn.Identity()
-        self.model.to(device)
+    def __init__(self, model_name: str, weights: str, device: str):
+        self.model_name = model_name.lower()
+        self.weights = 'DEFAULT'
         self.device = device
 
-    def __call__(self, img):
+        # Load the chosen model
+        if 'resnet' in self.model_name:
+            self.model = getattr(models, self.model_name)(weights=weights)
+            self.model = torch.nn.Sequential(*list(self.model.children())[:-1])
+
+        elif 'vgg' in self.model_name:
+            self.model = getattr(models, self.model_name)(weights=weights)
+            self.model.classifier = self.model.classifier[:-1]
+
+        elif 'vit' in self.model_name:
+            self.model = getattr(models, self.model_name)(weights=weights)
+            self.model = torch.nn.Sequential(*list(self.model.children())[:-1])
+
+        elif 'efficientnet' in self.model_name:
+            self.model = EfficientNet.from_pretrained(self.model_name)
+            self.model = torch.nn.Sequential(*list(self.model.children())[:-1])
+
+        else:
+            raise ValueError('Invalid model name.')
+
+        self.model.to(self.device)
         self.model.eval()
 
-        img_tensor = transforms.ToTensor()(img).unsqueeze(0)
-
+    def __call__(self, img):
         with torch.no_grad():
-            features = self.model(img_tensor.to(self.device))
-            features = features.squeeze(0)
-
-        return features
+            features = self.model(img.to(self.device))
+            features = features.reshape(features.size(0), -1)
+            return features

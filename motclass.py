@@ -3,98 +3,125 @@ import os
 
 import numpy as np
 import torch
+import torch_geometric.data as pyg_data
 from PIL import Image
 from torch.utils.data import Dataset
 from torchvision import transforms
 from torchvision.ops import box_convert
 from tqdm import tqdm
-import torch_geometric.data as pygeom_data
+from encoders import ImgEncoder
+
 from utilities import minkowski_distance
-# feature extraction
-from torchvision.models.feature_extraction import create_feature_extractor
-from torchvision.models.feature_extraction import get_graph_node_names
-import re
 
 LINKAGE_TYPES = {
     "ADJACENT": 0,
     "ALL": 1
 }
 
-def build_graph(adjacency_list: torch.Tensor, flattened_node: torch.Tensor, frame_times: torch.Tensor,
-                edge_partial_attributes: torch.Tensor, feature_extractor:str, weights="DEFAULT", device='cuda') -> pygeom_data.Data:
-    """
-    This function's purpose is to process the output of track.get_data() to build an appropriate graph
 
+def build_graph(adjacency_list: torch.Tensor,
+                flattened_node: torch.Tensor,
+                frame_times: torch.Tensor,
+                edge_partial_attributes: torch.Tensor,
+                feature_extractor: str,
+                weights="DEFAULT",
+                device='cuda') -> pyg_data.Data:
+    """
+    This function's purpose is to process the output of `track.get_data()` to build an appropriate graph.
 
     :param adjacency_list: tensor which represents the adjacency list. This will be used as 'edge_index'
     :param flattened_node: tensor which represents the node image
     :param frame_times: time distances of the frames
     :param edge_partial_attributes: at the moment, get_data returns just the center distance
     :param feature_extractor: feature extractor to use for calculating feature distances
+    :param weights: weights to use for the feature extractor
     :param device: device to use, either mps, cuda or cpu
 
     :return: a Pytorch Geometric graph object
     """
 
-    feature_extractor_net = torch.hub.load('pytorch/vision', feature_extractor, weights=weights)
-    feature_extractor_net = feature_extractor_net.to(device).eval()
-    # train_nodes, eval_nodes = get_graph_node_names(feature_extractor_net)
-    # TODO: this is a momentary solution, we should do it by hand for each network
-    #def get_last_layer(nodes):
-    #    last_layer = 1
-    #    for node in nodes:
-    #        s = re.search(pattern="layer([0-9])\.", string=node)
-    #        if s is not None:
-    #            if int(s.group(1)) > last_layer: last_layer=int(s.group(1))
-    #    return "layer"+str(last_layer)
-#
-    # ll = get_last_layer(eval_nodes)
-    # return_nodes = {
-    #     ll:ll
-    # }
-    # feature_extractor = create_feature_extractor(feature_extractor_net, return_nodes=return_nodes)
-
+    feature_extractor_net = ImgEncoder(feature_extractor, weights=weights, device=device)
 
     flattened_node = flattened_node.float()
     number_of_nodes = len(flattened_node)
 
-    # batch processing
+    # NODES processing - image features extraction (using batches)
+
     node_features = None
     batch_size = 8
-    for i in tqdm(range(0, number_of_nodes, batch_size)):
+
+    pbar = tqdm(range(0, number_of_nodes, batch_size), desc="Processing nodes")
+
+    for i in pbar:
+
         if i + batch_size > number_of_nodes:
             batch_tensor = flattened_node[i:, :, :, :]
         else:
-            batch_tensor = flattened_node[i:i + batch_size,:,:,:]
+            batch_tensor = flattened_node[i:i + batch_size, :, :, :]
         with torch.no_grad():
             f = feature_extractor_net(batch_tensor)
         if node_features is None:
-            node_features = torch.zeros(f.shape[1]).to(device) # otherwise we cannot stack
+            node_features = torch.zeros(f.shape[1]).to(device)  # otherwise we cannot stack
+
         node_features = torch.vstack((node_features, f))
-        # f = f.reshape((batch_size, f.shape[1] * f.shape[2] * f.shape[3]))
 
-    node_features = node_features[1:,:]
+    # f = f.reshape((batch_size, f.shape[1] * f.shape[2] * f.shape[3]))
 
-    edge_differences = torch.zeros(node_features.shape[1]).to(device)
-    for i in tqdm(range(0, len(adjacency_list), 2)):
-        node1 = node_features[adjacency_list[i][0]]
-        node2 = node_features[adjacency_list[i][1]]
+    node_features = node_features[1:, :]
 
-        difference = node1 - node2
+    # EDGES processing - edge features computation
 
-        edge_differences = torch.vstack((edge_differences, difference))
-        edge_differences = torch.vstack((edge_differences, difference))
+    all_edge_differences = []
 
-    edge_differences = edge_differences[1:,:]
-    edge_attr = torch.hstack((edge_partial_attributes.to(device),edge_differences))
+    # pre-compute the # of batches
+    n_batches = np.ceil(adjacency_list.shape[0] / batch_size)
 
-    graph = pygeom_data.Data(
+    pbar = tqdm(range(0, int(n_batches)), desc="Processing edges")
+
+    for batch_idx in pbar:
+
+        batch_edge_differences = torch.zeros(node_features.shape[1]).to(device)
+
+        # A batch example:
+        #
+        #  0      1        2      3        4      5        6      7
+        # (A, B) (B, A)   (C, D) (D, C)   (E, F) (F, E)   (G, H) (H, G)
+
+        for i in range(0, batch_size, 2):
+
+            if (batch_idx * batch_size) + i >= adjacency_list.shape[0]:
+                break
+
+            node1 = node_features[adjacency_list[(batch_idx * batch_size) + i][0]]
+            node2 = node_features[adjacency_list[(batch_idx * batch_size) + i][1]]
+
+            difference = node1 - node2
+
+            batch_edge_differences = torch.vstack((batch_edge_differences, difference))
+            batch_edge_differences = torch.vstack((batch_edge_differences, difference))
+
+        batch_edge_differences = batch_edge_differences[1:, :]
+        all_edge_differences.append(batch_edge_differences)
+
+    # print("all_edge_differences len:", len(all_edge_differences))
+    # print("its content shape:", all_edge_differences[0].shape)
+
+    all_edge_differences = torch.vstack(all_edge_differences)
+
+    # print("all_edge_differences shape:", all_edge_differences.shape)
+
+    edge_attr = torch.hstack((edge_partial_attributes.to(device), all_edge_differences))
+
+    # GRAPH building
+
+    graph = pyg_data.Data(
         detections=node_features,
         num_nodes=number_of_nodes,
         times=frame_times,
         edge_index=adjacency_list,
-        edge_attr=edge_attr, # TODO: capire se gli edge attributes devono essere della stessa size della list
+        edge_attr=edge_attr,  # TODO: should edge attributes tensor have same size of the adjacency list?
     )
+
     return graph
 
 
@@ -115,7 +142,25 @@ class MotTrack:
         self.linkage_type = LINKAGE_TYPES[linkage_type]
         self.detections = self._read_detections()
         self.device = device
-        self.n_nodes = None # will be a list of int
+        self.n_nodes = None  # will be a list of int
+
+        if self.det_resize is None:
+            self.det_resize = self._get_avg_size()
+
+    def _get_avg_size(self) -> tuple:
+        ws, hs = [], []
+        for frame_idx in self.detections.keys():
+            for bbox in self.detections[frame_idx]:
+                ws.append(bbox[2])
+                hs.append(bbox[3])
+        ws, hs = np.array(ws), np.array(hs)
+        ws = ws[ws < np.percentile(ws, 95)]
+        hs = hs[hs < np.percentile(hs, 95)]
+
+        return tuple([
+            int(ws.mean()),
+            int(hs.mean())
+        ])
 
     def _read_detections(self, delimiter=",", columns=(0, 2, 3, 4, 5)) -> dict:
         """Read detections into a dictionary"""
@@ -134,8 +179,10 @@ class MotTrack:
     def get_data(self, limit=-1, distance_power=2) -> tuple:
         """
         This function performs two steps:
-        1) DETECTIONS EXTRACTION - extract all relevant features of all detections in all frames. So far, only the center distance, other features will be added later
+        1) DETECTIONS EXTRACTION - extract all relevant features of all detections in all frames.
+           (so far, only the center distance, other features will be added later)
         2) NODE LINKAGE - creates adjacency matrix and feature matrix, according to linkage type
+
         :param limit: limit the number of frames to process. -1 = no limit
         :param distance_power: power for the minkowski distance. NB: 1=Manhattan, 2=Euclidean. Must be >= 1
         :return: a tuple: (adjacency_matrix, flattened_node_features, frame_times, edge_attributes)
@@ -153,7 +200,7 @@ class MotTrack:
 
         for image in pbar:
 
-            pbar.set_description(f"Processing frame #{i + 1} ({image})")
+            pbar.set_description(f"Reading frame {self.img_dir}/{image}")
 
             image = Image.open(os.path.normpath(os.path.join(self.img_dir, image)))
 
@@ -227,25 +274,24 @@ class MotTrack:
             #   Edge features:
             #   - pairwise detections centers distance
 
-            for i in range(1, len(track_detections)):
+            for i in tqdm(range(1, len(track_detections)), desc="Building edge attributes"):
                 for j in range(len(track_detections[i])):
                     for k in range(len(track_detections[i - 1])):
                         # Add pairwise bbox centers distance
                         # https://stackoverflow.com/a/63196534
-                        edge_attr.append(torch.tensor([
-                            minkowski_distance([track_detections_centers[i][j][0], track_detections_centers[i][j][1]],
-                                               [track_detections_centers[i - 1][k][0],
-                                                track_detections_centers[i - 1][k][1]],
-                                               distance_power)
-                        ]))
-                        edge_attr.append(torch.tensor([
-                            minkowski_distance([track_detections_centers[i][j][0], track_detections_centers[i][j][1]],
-                                               [track_detections_centers[i - 1][k][0],
-                                                track_detections_centers[i - 1][k][1]],
-                                               distance_power)
-                        ]))
 
-                        # Build the adjacency matrix
+                        center_distance = torch.tensor([
+                            minkowski_distance([track_detections_centers[i][j][0],
+                                                track_detections_centers[i][j][1]],
+                                               [track_detections_centers[i - 1][k][0],
+                                                track_detections_centers[i - 1][k][1]],
+                                               distance_power)
+                        ])
+
+                        edge_attr.append(center_distance)
+                        edge_attr.append(center_distance)
+
+                        # Build the adjacency list
 
                         adjacency_list.append([
                             j + n_sum[i],
@@ -256,7 +302,7 @@ class MotTrack:
                             j + n_sum[i]
                         ])
 
-                        pass # debug
+                        pass  # debug
 
         # LINKAGE Type No.1
         elif self.linkage_type == 1:
@@ -266,18 +312,25 @@ class MotTrack:
             #   - pairwise detections centers distance
             #   - pairwise detections time distance (frames)
 
-            for i in range(len(track_detections)):
+            for i in tqdm(range(len(track_detections)), desc="Building edge attributes"):
                 for j in range(len(track_detections[i])):
                     for k in range(len(track_detections)):
+
                         if k == i:
                             continue  # skip same frame detections
 
                         for l in range(len(track_detections[k])):
-                            # TODO: distance functions
-                            edge_attr.append(torch.tensor([
-                                track_detections_centers[i][j][0] - track_detections_centers[i - 1][k][0],
-                                track_detections_centers[i][j][1] - track_detections_centers[i - 1][k][1]
-                            ]))
+                            center_distance = torch.tensor([
+                                minkowski_distance(
+                                    [track_detections_centers[i][j][0],
+                                     track_detections_centers[i][j][1]],
+                                    [track_detections_centers[k][l][0],
+                                     track_detections_centers[k][l][1]],
+                                    distance_power)
+                            ])
+
+                            edge_attr.append(center_distance)
+                            edge_attr.append(center_distance)
 
                             adjacency_list.append([
                                 j + n_sum[i],
@@ -294,6 +347,8 @@ class MotTrack:
         # Prepare the edge index tensor for pytorch geometric
         adjacency_list = torch.tensor(adjacency_list)  # .t().contiguous()
 
+        print(f"[INFO] {len(track_detections)} total frames")
+        print(f"[INFO] {len(flattened_node_features)} total nodes")
         print(f"[INFO] {len(adjacency_list)} total edges")
 
         # # # # # #
@@ -325,25 +380,6 @@ class MotDataset(Dataset):
             f"Split must be one of {os.listdir(self.dataset_dir)}."
 
         self.tracklist = os.listdir(os.path.join(self.dataset_dir, split))
-
-        if self.det_resize is None:
-            self.det_resize = self._get_avg_size()
-
-    def _get_avg_size(self):
-
-        width = list()
-        height = list()
-
-        for track in self:
-            for f in os.listdir(track.img_dir):
-                im = Image.open(os.path.join(track.img_dir, f))
-                width.append(im.size[0])
-                height.append(im.size[1])
-
-        return tuple([
-            int(np.mean(width)),
-            int(np.mean(height))
-        ])
 
     def __getitem__(self, item):
         track_path = os.path.join(self.dataset_dir, self.split, self.tracklist[item])
