@@ -71,16 +71,18 @@ def build_graph(adjacency_list: torch.Tensor,
 
     # EDGES processing - edge features computation
 
-    all_edge_differences = []
-
     # pre-compute the # of batches
-    n_batches = np.ceil(adjacency_list.shape[0] / batch_size)
+    n_batches = int(np.ceil(adjacency_list.shape[0] / batch_size))
 
     pbar = tqdm(range(0, int(n_batches)), desc="Processing edges")
 
+    # precompute edge features, vstack causes memory leak
+    final_edge_attributes = torch.zeros((edge_partial_attributes.shape[0],node_features.shape[1] + 1)).to(torch.float16)
+    final_edge_attributes[:,0] = edge_partial_attributes.t()
+    del edge_partial_attributes
+
     for batch_idx in pbar:
 
-        batch_edge_differences = torch.zeros(node_features.shape[1]).to(device).to(torch.float16)
 
         # A batch example:
         #
@@ -89,29 +91,22 @@ def build_graph(adjacency_list: torch.Tensor,
 
         for i in range(0, batch_size, 2):
 
-            if (batch_idx * batch_size) + i >= adjacency_list.shape[0]:
+            element_index = (batch_idx * batch_size) + i
+
+            if element_index >= adjacency_list.shape[0]:
                 break
 
-            node1 = node_features[adjacency_list[(batch_idx * batch_size) + i][0]]
-            node2 = node_features[adjacency_list[(batch_idx * batch_size) + i][1]]
+            node1 = node_features[adjacency_list[element_index][0]]
+            node2 = node_features[adjacency_list[element_index][1]]
 
             difference = (node1 - node2).to(torch.float16)
 
-            batch_edge_differences = torch.vstack((batch_edge_differences, difference))
-            batch_edge_differences = torch.vstack((batch_edge_differences, difference))
+            final_edge_attributes[element_index, 1:] = difference
+            final_edge_attributes[element_index + 1, 1:] = difference
 
-        batch_edge_differences = batch_edge_differences[1:, :]
-        all_edge_differences.append(batch_edge_differences.cpu())
-
-    # print("all_edge_differences len:", len(all_edge_differences))
-    # print("its content shape:", all_edge_differences[0].shape)
+        pass
 
 
-    all_edge_differences = torch.vstack(all_edge_differences)
-
-    # print("all_edge_differences shape:", all_edge_differences.shape)
-
-    edge_attr = torch.hstack((edge_partial_attributes.to(device), all_edge_differences))
 
     # GRAPH building
 
@@ -120,7 +115,7 @@ def build_graph(adjacency_list: torch.Tensor,
         num_nodes=number_of_nodes,
         times=frame_times,
         edge_index=adjacency_list,
-        edge_attr=edge_attr,  # TODO: should edge attributes tensor have same size of the adjacency list?
+        edge_attr=final_edge_attributes,  # TODO: should edge attributes tensor have same size of the adjacency list?
     )
 
     return graph
@@ -315,10 +310,10 @@ class MotTrack:
 
             for i in tqdm(range(len(track_detections)), desc="Building edge attributes"): # for each frame in the track
                 for j in range(len(track_detections[i])): # for each detection of that frame (i)
-                    for k in range(len(track_detections)): # for each frame in the track
+                    for k in range(i + 1, len(track_detections)): # for each frame in the track
 
-                        if k <= i:
-                            continue  # skip same frame detections
+                        # if k <= i:
+                        #     continue  # skip same frame detections
 
                         for l in range(len(track_detections[k])): # for each detection of the frame (k)
                             center_distance = torch.tensor([
