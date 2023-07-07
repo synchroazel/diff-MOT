@@ -77,7 +77,7 @@ def build_graph(adjacency_list: torch.Tensor,
     pbar = tqdm(range(0, int(n_batches)), desc="Processing edges")
 
     # precompute edge features, vstack causes memory leak
-    final_edge_attributes = torch.zeros((edge_partial_attributes.shape[0],node_features.shape[1] + 1)).to(torch.float16)
+    final_edge_attributes = torch.zeros((edge_partial_attributes.shape[0],node_features.shape[1] + 1), dtype=torch.float16)
     final_edge_attributes[:,0] = edge_partial_attributes.t()
     del edge_partial_attributes
 

@@ -8,9 +8,12 @@ from utilities import get_best_device
 
 device = get_best_device()
 
-mot20_path = "/media/dmmp/vid+backup/Data/MOT20/images"
-mot20 = MotDataset(mot20_path, 'train', linkage_window=LINKAGE_TYPES["ALL"], device=device)
-# mot20 = MotDataset(mot20_path, 'train', linkage_window=5, device=device)
+# mot20_path = "/media/dmmp/vid+backup/Data/MOT20/images"
+mot20_path = "/media/dmmp/vid+backup/Data/MOT17"
+# mot20 = MotDataset(mot20_path, 'train', linkage_window=LINKAGE_TYPES["ALL"], device=device, det_resize=(32, 32))
+# mot20 = MotDataset(mot20_path, 'train', linkage_window=5, device=device, det_resize=(32, 32))
+# mot20 = MotDataset(mot20_path, 'train', linkage_window=15, device=device, det_resize=(32, 32))
+mot20 = MotDataset(mot20_path, 'train', linkage_window=0, device=device, det_resize=(32, 32))
 
 track = mot20[0]
 
@@ -23,6 +26,7 @@ graph = build_graph(adjacency_list=adj_list,
                     frame_times=frame_times,
                     edge_partial_attributes=edge_attr,
                     feature_extractor='resnet101',
+
                     device=device)
 
 
