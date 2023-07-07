@@ -1,6 +1,33 @@
 import numpy as np
 import torch
+import os
+import sys
+def create_subtracks(track_directory:str, frames: int) -> None:
+    """ This function is used to create subtracks of a MOT track. To avoid memory cluttering, it creates symbolic links in the subfolders"""
 
+    images = os.listdir(track_directory)
+    images = [x for x in images if x[-4] == '.']
+
+    subtrack_base = os.path.normpath(os.path.join(track_directory,"subtrack_"))
+
+    j = 0
+
+    for i, image in enumerate(images):
+
+        image_path = os.path.normpath(os.path.join(track_directory, image))
+
+        if i % frames == 0:
+            # create subfolder
+            subfolder = subtrack_base + str(j)
+            j += 1
+            if not os.path.exists(subfolder):
+                os.makedirs(subfolder)
+
+        # create symbolic link
+        try:
+            os.symlink(src=image_path, dst=os.path.normpath(os.path.join(subfolder,image)))
+        except FileExistsError:
+            pass
 
 def get_best_device():
     """Function used to get the best device between cuda, mps and cpu"""
