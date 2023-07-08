@@ -13,20 +13,11 @@ mot20_path = "/media/dmmp/vid+backup/Data/MOT17"
 # mot20 = MotDataset(mot20_path, 'train', linkage_window=LINKAGE_TYPES["ALL"], device=device, det_resize=(32, 32))
 # mot20 = MotDataset(mot20_path, 'train', linkage_window=5, device=device, det_resize=(32, 32))
 # mot20 = MotDataset(mot20_path, 'train', linkage_window=15, device=device, det_resize=(32, 32))
-mot20 = MotDataset(mot20_path, 'train', linkage_window=0, device=device, det_resize=(32, 32))
+mot20 = MotDataset(mot20_path, 'train', subtrack_len=-1, device=device)
 
-track = mot20[0]
+track = mot20[1]
 
-adj_list, node_feats, frame_times, edge_attr = track.get_data()
+graph = build_graph(**track.get_data(), device=device)
 
-del track
-
-graph = build_graph(adjacency_list=adj_list,
-                    flattened_node=node_feats,
-                    frame_times=frame_times,
-                    edge_partial_attributes=edge_attr,
-                    feature_extractor='resnet101',
-
-                    device=device)
 
 

@@ -122,9 +122,9 @@ def build_graph(adjacency_list: torch.Tensor,
     # # Create a 1D Tensor with the distances of the detections ordered as the edges in the adj list
     partial_edge_attributes = detections_dist[adjacency_list[:, 0], adjacency_list[:, 1]]
 
-    """
-    GRAPH building
-    """
+    ###
+    # GRAPH building
+    ###
 
     graph = pyg_data.Data(
         detections=node_features,
@@ -157,15 +157,16 @@ class MotTrack:
         self.device = device
 
         self.n_frames = len(images_list)
-        self.n_nodes = None
+        self.n_nodes = []
 
         if self.linkage_window > self.n_frames:
-            raise ValueError(f"[WARN] `linkage window` was set to {self.linkage_window}\
+            print(f"[WARN] `linkage window` was set to {self.linkage_window}\
             but track has {self.n_frames} frames. Setting `linkage window` to {self.n_frames}")
+            self.linkage_window = self.n_frames
 
         print(f"[INFO] Track has {self.n_frames} frames")
 
-    def get_data(self) -> dict:
+    def get_data(self, dtype=torch.float32) -> dict:
         """
         This function performs two steps:
 
@@ -173,69 +174,55 @@ class MotTrack:
            Detections are extracted, cropped, resized and turned to Tensor.
 
         2) NODE LINKAGE
-           Creates adjacency matrix and feature matrix, according to linkage type.
+           Creates adjacency matrix and feature matrix, according to a linkage type.
 
-        :param limit: limit the number of frames to process. -1 = no limit
-        :return: a tuple: (adjacency_matrix, flattened_node_features, frame_times, edge_attributes)
+        :return: a dict: with keys (adjacency_matrix, node_features, frame_times, detections_coords)
         """
 
-        """
-        Detections extraction
-        """
+        #
+        # Detections extraction
+        #
 
-        track_detections = list()  # all image detections across all frames
-        track_detections_coords = list()  # all detections coordinates (xyxy) across all frames
+         # all detections coordinates (xyxy) across all frames
 
         pbar = tqdm(self.images_list)
 
         i = 0  # frame counter
+        j = 0
+
+        number_of_detections = sum([len(x) for x in self.detections])
+
+        track_detections_coords = torch.zeros((number_of_detections, 4), dtype=dtype).to(self.device)
+        frame_times = torch.zeros((number_of_detections, 1), dtype=torch.int16).to(self.device)
+        flattened_node_features = torch.zeros((number_of_detections, 3, self.det_resize[1], self.det_resize[0]), dtype=dtype).to(self.device)
 
         # Process all frames images
         for image in pbar:
-
+            nodes = 0
             pbar.set_description(f"Reading frame {image}")
 
-            image = Image.open(os.path.normpath(image))
+            image = Image.open(os.path.normpath(image))  # all image detections in the current frame
 
-            frame_detections = []  # all image detections in the current frame
-
-            for j, bbox in enumerate(self.detections[i]):
+            for bbox in self.detections[i]:
+                nodes += 1
                 bbox = box_convert(torch.tensor(bbox), "xywh", "xyxy").tolist()
 
                 detection = image.crop(bbox)
                 detection = detection.resize(self.det_resize)
                 detection = transforms.PILToTensor()(detection)
 
-                frame_detections.append(detection)
+                flattened_node_features[j,:,:,:] = detection
 
-                track_detections_coords.append(
-                    torch.tensor(bbox).to(self.device)
-                )
 
-            track_detections.append(frame_detections)
+                track_detections_coords[j,:] = torch.tensor(bbox)
+                frame_times[j,0] = i
+                j += 1
 
-            # if i + 1 == limit:
-            #     break
-
+            # List with the number of nodes per frame (aka number of detections per frame)
+            self.n_nodes.append(nodes)
             i += 1
 
-        # Convert `track_detections_coords` to Tensor
-        track_detections_coords = torch.stack(track_detections_coords)
-
-        # Flattened list of node features
-        flattened_node_features = [item
-                                   for sublist in track_detections
-                                   for item in sublist]
-
-        flattened_node_features = torch.stack(flattened_node_features).to(self.device)
-
-        # List with the frame number of each detection
-        frame_times = [i
-                       for i in range(len(track_detections))
-                       for _ in range(len(track_detections[i]))]
-
-        frame_times = torch.tensor(frame_times).to(self.device)
-
+        pass
         """
         Node linkage
         """
@@ -253,15 +240,12 @@ class MotTrack:
 
         adjacency_list = list()  # Empty list to store edge indices
 
-        # List with the number of nodes per frame (aka number of detections per frame)
-        self.n_nodes = [len(frame_detections) for frame_detections in track_detections]
-
         # Cumulative sum of the number of nodes per frame, used in the building of edge_index
         n_sum = [0] + np.cumsum(self.n_nodes).tolist()
 
-        for i in tqdm(range(len(track_detections)), desc="Linking nodes"):  # for each frame in the track
-            for j in range(len(track_detections[i])):  # for each detection of that frame (i)
-                for k in range(len(track_detections)):  # for each frame in the track
+        for i in tqdm(range(self.n_frames), desc="Linking nodes"):  # for each frame in the track
+            for j in range(self.n_nodes[i]):  # for each detection of that frame (i)
+                for k in range(self.n_frames):  # for each frame in the track
 
                     if self.linkage_window == -1:
                         if k <= i:
@@ -279,7 +263,7 @@ class MotTrack:
                         if k > i + self.linkage_window:
                             break
 
-                    for l in range(len(track_detections[k])):  # for each detection of the frame (k)
+                    for l in range(self.n_nodes[k]):  # for each detection of the frame (k)
 
                         adjacency_list.append(
                             [j + n_sum[i], l + n_sum[k]]
@@ -291,7 +275,7 @@ class MotTrack:
         # Prepare the edge index tensor for pytorch geometric
         adjacency_list = torch.tensor(adjacency_list)  # .t().contiguous()
 
-        print(f"[INFO] {len(track_detections)} frames")
+        print(f"[INFO] {self.n_frames} frames")
         print(f"[INFO] {len(flattened_node_features)} total nodes")
         print(f"[INFO] {len(adjacency_list)} total edges")
 
