@@ -27,7 +27,8 @@ def build_graph(adjacency_list: torch.Tensor,
                 detections_coords: torch.Tensor,
                 device: str,
                 feature_extractor: str = "resnet101",
-                weights: str = "DEFAULT") -> pyg_data.Data:
+                weights: str = "DEFAULT",
+                dtype=torch.float32) -> pyg_data.Data:
     """
     This function's purpose is to process the output of `track.get_data()` to build an appropriate graph.
 
@@ -44,9 +45,16 @@ def build_graph(adjacency_list: torch.Tensor,
 
     batch_size = 8  # used throughout edges and nodes processing
 
-    flattened_node = node_features.float()
-    number_of_nodes = len(flattened_node)
+    node_features = node_features.to(dtype)
+    number_of_nodes = len(node_features)
 
+    # for distance calculation
+    detections_coords = box_convert(torch.tensor(detections_coords),"xyxy", "cxcywh" )
+
+    # centers = torch.zeros((len(detections_coords),2), dtype=dtype, device=device)
+    # centers[:,(0,1)] = detections_coords[:,(0,1)] / 1000
+    # del detections_coords
+    detections_coords = detections_coords[:,(0,1)] / 1000
     """
     NODES processing - image features extraction (using batches)
     """
@@ -117,15 +125,27 @@ def build_graph(adjacency_list: torch.Tensor,
 
     """ Detections distance """
 
-    detections_dist = torch.cdist(detections_coords.to(device), detections_coords.to(device))
 
+    # detections_dist = torch.cdist(detections_coords.to(torch.float32), detections_coords.to(torch.float32)).to(dtype)
+
+    detections_dist = torch.cdist(detections_coords, detections_coords, p=2).to('cpu')
+    # input("before indexing")
     # # Create a 1D Tensor with the distances of the detections ordered as the edges in the adj list
-    partial_edge_attributes = detections_dist[adjacency_list[:, 0], adjacency_list[:, 1]]
+    a = adjacency_list[:, 0].to('cpu').to(torch.int)
+    b = adjacency_list[:, 1].to('cpu').to(torch.int)
+    partial_edge_attributes = detections_dist[a, b]
+    # input("after indexing")
+    del detections_dist
+    del a
+    del b
+    # input("detection dist deleted")
 
+    partial_edge_attributes = partial_edge_attributes.to(device) * 1000
+    # print(partial_edge_attributes)
     ###
     # GRAPH building
     ###
-
+    # input("edges moved to gpu")
     graph = pyg_data.Data(
         detections=node_features,
         num_nodes=number_of_nodes,
@@ -146,7 +166,9 @@ class MotTrack:
                  det_resize: tuple,
                  linkage_window: int,
                  subtrack_len: int,
-                 device: str):
+                 device: str,
+                 dtype=torch.float32,
+                 name = "track1"):
 
         self.detections = detections
         self.images_list = images_list
@@ -155,9 +177,10 @@ class MotTrack:
         self.linkage_window = linkage_window
         self.subtrack_len = subtrack_len
         self.device = device
-
+        self.name=name
         self.n_frames = len(images_list)
         self.n_nodes = []
+        self.dtype = dtype
 
         if self.linkage_window > self.n_frames:
             print(f"[WARN] `linkage window` was set to {self.linkage_window}\
@@ -166,7 +189,13 @@ class MotTrack:
 
         print(f"[INFO] Track has {self.n_frames} frames")
 
-    def get_data(self, dtype=torch.float32) -> dict:
+    def __str__(self):
+        name = self.name + "/window_" + str(self.linkage_window)
+        if self.subtrack_len > 0:
+            name += "|subtrack-len_" + str(self.subtrack_len)
+        return name
+
+    def get_data(self) -> dict:
         """
         This function performs two steps:
 
@@ -192,9 +221,9 @@ class MotTrack:
 
         number_of_detections = sum([len(x) for x in self.detections])
 
-        track_detections_coords = torch.zeros((number_of_detections, 4), dtype=dtype).to(self.device)
+        track_detections_coords = torch.zeros((number_of_detections, 4), dtype=self.dtype).to(self.device)
         frame_times = torch.zeros((number_of_detections, 1), dtype=torch.int16).to(self.device)
-        flattened_node_features = torch.zeros((number_of_detections, 3, self.det_resize[1], self.det_resize[0]), dtype=dtype).to(self.device)
+        flattened_node_features = torch.zeros((number_of_detections, 3, self.det_resize[1], self.det_resize[0]), dtype=self.dtype).to(self.device)
 
         # Process all frames images
         for image in pbar:
@@ -222,7 +251,7 @@ class MotTrack:
             self.n_nodes.append(nodes)
             i += 1
 
-        pass
+
         """
         Node linkage
         """
@@ -256,8 +285,6 @@ class MotTrack:
                             continue
 
                     if self.linkage_window > 0:
-                        if i != 0:
-                            break
                         if k <= i:
                             continue
                         if k > i + self.linkage_window:
@@ -273,7 +300,7 @@ class MotTrack:
                         )
 
         # Prepare the edge index tensor for pytorch geometric
-        adjacency_list = torch.tensor(adjacency_list)  # .t().contiguous()
+        adjacency_list = torch.tensor(adjacency_list).to(torch.int16).to(self.device)  # .t().contiguous()
 
         print(f"[INFO] {self.n_frames} frames")
         print(f"[INFO] {len(flattened_node_features)} total nodes")
@@ -298,20 +325,26 @@ class MotDataset(Dataset):
                  split,
                  detection_file_name="det.txt",
                  images_directory="img1",
+                 name="MOT",
                  det_resize=(70, 170),
                  linkage_window=-1,
                  subtrack_len=-1,
+                 subtrack_number=-1,
                  debug=False,
-                 device="cpu"):
+                 device="cpu",
+                 dtype=torch.float32):
         self.dataset_dir = dataset_path
         self.split = split
         self.detection_file_name = detection_file_name
+        self.name = name
         self.images_directory = images_directory
         self.det_resize = det_resize
         self.linkage_window = linkage_window
         self.subtrack_len = subtrack_len
+        self.subtrack_number = subtrack_number
         self.device = device
         self.debug = debug
+        self.dtype = dtype
 
         assert split in os.listdir(self.dataset_dir), \
             f"Split must be one of {os.listdir(self.dataset_dir)}."
@@ -342,7 +375,7 @@ class MotDataset(Dataset):
             detections_file = os.path.normpath(os.path.join(track_path, "det", self.detection_file_name))
             detections = self._read_detections(detections_file)
             detections = [detections[frame] for frame in sorted(detections.keys())]
-            all_detections = all_detections + [detections]
+            all_detections += [detections]
 
         all_images = list()
 
@@ -351,7 +384,7 @@ class MotDataset(Dataset):
             img_dir = os.path.normpath(os.path.join(track_path, self.images_directory))
             images_list = sorted([os.path.join(img_dir, img) for img in os.listdir(img_dir)])
             frames_per_track.append(len(images_list))
-            all_images = all_images + [images_list]
+            all_images += [images_list]
 
         if self.subtrack_len == -1:
             return MotTrack(detections=all_detections[idx],
@@ -359,7 +392,9 @@ class MotDataset(Dataset):
                             det_resize=self.det_resize,
                             linkage_window=self.linkage_window,
                             subtrack_len=self.subtrack_len,
-                            device=self.device)
+                            device=self.device,
+                            dtype=self.dtype,
+                            name=self.name + "/track_" + str(self.tracklist[idx]))
 
         if self.subtrack_len > 0:
 
@@ -413,4 +448,6 @@ class MotDataset(Dataset):
                             det_resize=self.det_resize,
                             linkage_window=self.linkage_window,
                             subtrack_len=self.subtrack_len,
-                            device=self.device)
+                            device=self.device,
+                            dtype=self.dtype,
+                            name=self.name + "/track_" + str(self.tracklist[cur_track]) + "/subtrack_" + str(idx))
