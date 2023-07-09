@@ -39,7 +39,7 @@ def build_graph(adjacency_list: torch.Tensor,
     :param feature_extractor: feature extractor to use for calculating feature distances
     :param weights: weights to use for the feature extractor
     :param device: device to use, either mps, cuda or cpu
-
+    :param dtype: data type to use
     :return: a Pytorch Geometric graph object
     """
 
@@ -49,12 +49,13 @@ def build_graph(adjacency_list: torch.Tensor,
     number_of_nodes = len(node_features)
 
     # for distance calculation
-    detections_coords = box_convert(torch.tensor(detections_coords),"xyxy", "cxcywh" )
+    detections_coords = box_convert(torch.clone(detections_coords).detach(), "xyxy", "cxcywh")
 
     # centers = torch.zeros((len(detections_coords),2), dtype=dtype, device=device)
     # centers[:,(0,1)] = detections_coords[:,(0,1)] / 1000
     # del detections_coords
-    detections_coords = detections_coords[:,(0,1)] / 1000
+    detections_coords = detections_coords[:, (0, 1)] / 1000
+
     """
     NODES processing - image features extraction (using batches)
     """
@@ -125,14 +126,13 @@ def build_graph(adjacency_list: torch.Tensor,
 
     """ Detections distance """
 
-
     # detections_dist = torch.cdist(detections_coords.to(torch.float32), detections_coords.to(torch.float32)).to(dtype)
 
     detections_dist = torch.cdist(detections_coords, detections_coords, p=2).to('cpu')
     # input("before indexing")
     # # Create a 1D Tensor with the distances of the detections ordered as the edges in the adj list
-    a = adjacency_list[:, 0].to('cpu').to(torch.int)
-    b = adjacency_list[:, 1].to('cpu').to(torch.int)
+    a = adjacency_list[:, 0].to('cpu').to(torch.long)
+    b = adjacency_list[:, 1].to('cpu').to(torch.long)
     partial_edge_attributes = detections_dist[a, b]
     # input("after indexing")
     del detections_dist
@@ -168,7 +168,7 @@ class MotTrack:
                  subtrack_len: int,
                  device: str,
                  dtype=torch.float32,
-                 name = "track1"):
+                 name="track"):
 
         self.detections = detections
         self.images_list = images_list
@@ -177,7 +177,7 @@ class MotTrack:
         self.linkage_window = linkage_window
         self.subtrack_len = subtrack_len
         self.device = device
-        self.name=name
+        self.name = name
         self.n_frames = len(images_list)
         self.n_nodes = []
         self.dtype = dtype
@@ -190,9 +190,18 @@ class MotTrack:
         print(f"[INFO] Track has {self.n_frames} frames")
 
     def __str__(self):
-        name = self.name + "/window_" + str(self.linkage_window)
+
+        name = self.name
+
+        if self.linkage_window == -1 and self.subtrack_len == -1:
+            name += "/" + self.name.split("/")[-1]
+
+        if self.linkage_window > 0:
+            name += "/window_" + str(self.linkage_window)
+
         if self.subtrack_len > 0:
-            name += "|subtrack-len_" + str(self.subtrack_len)
+            name += "_len_" + str(self.subtrack_len)
+
         return name
 
     def get_data(self) -> dict:
@@ -212,7 +221,7 @@ class MotTrack:
         # Detections extraction
         #
 
-         # all detections coordinates (xyxy) across all frames
+        # all detections coordinates (xyxy) across all frames
 
         pbar = tqdm(self.images_list)
 
@@ -223,7 +232,8 @@ class MotTrack:
 
         track_detections_coords = torch.zeros((number_of_detections, 4), dtype=self.dtype).to(self.device)
         frame_times = torch.zeros((number_of_detections, 1), dtype=torch.int16).to(self.device)
-        flattened_node_features = torch.zeros((number_of_detections, 3, self.det_resize[1], self.det_resize[0]), dtype=self.dtype).to(self.device)
+        flattened_node_features = torch.zeros((number_of_detections, 3, self.det_resize[1], self.det_resize[0]),
+                                              dtype=self.dtype).to(self.device)
 
         # Process all frames images
         for image in pbar:
@@ -240,17 +250,15 @@ class MotTrack:
                 detection = detection.resize(self.det_resize)
                 detection = transforms.PILToTensor()(detection)
 
-                flattened_node_features[j,:,:,:] = detection
+                flattened_node_features[j, :, :, :] = detection
 
-
-                track_detections_coords[j,:] = torch.tensor(bbox)
-                frame_times[j,0] = i
+                track_detections_coords[j, :] = torch.tensor(bbox)
+                frame_times[j, 0] = i
                 j += 1
 
             # List with the number of nodes per frame (aka number of detections per frame)
             self.n_nodes.append(nodes)
             i += 1
-
 
         """
         Node linkage
@@ -325,7 +333,7 @@ class MotDataset(Dataset):
                  split,
                  detection_file_name="det.txt",
                  images_directory="img1",
-                 name="MOT",
+                 name=None,
                  det_resize=(70, 170),
                  linkage_window=-1,
                  subtrack_len=-1,
@@ -336,7 +344,6 @@ class MotDataset(Dataset):
         self.dataset_dir = dataset_path
         self.split = split
         self.detection_file_name = detection_file_name
-        self.name = name
         self.images_directory = images_directory
         self.det_resize = det_resize
         self.linkage_window = linkage_window
@@ -345,6 +352,8 @@ class MotDataset(Dataset):
         self.device = device
         self.debug = debug
         self.dtype = dtype
+
+        self.name = dataset_path.split('/')[-1] if name is None else name
 
         assert split in os.listdir(self.dataset_dir), \
             f"Split must be one of {os.listdir(self.dataset_dir)}."
