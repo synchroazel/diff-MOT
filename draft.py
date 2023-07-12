@@ -10,16 +10,17 @@ from utilities import get_best_device
 
 device = get_best_device()
 
-mot20_path = "/media/dmmp/vid+backup/Data/MOT20/images"
-# mot20_path = "/media/dmmp/vid+backup/Data/MOT17"
+# mot20_path = "/media/dmmp/vid+backup/Data/MOT20"
+mot20_path = "/media/dmmp/vid+backup/Data/MOT17"
 # mot20 = MotDataset(mot20_path, 'train', linkage_window=LINKAGE_TYPES["ALL"], device=device, det_resize=(32, 32))
-# mot20 = MotDataset(mot20_path, 'train', linkage_window=5, device=device, det_resize=(32, 32))
-# mot20 = MotDataset(mot20_path, 'train', linkage_window=15, device=device, det_resize=(32, 32))
-mot20 = MotDataset(mot20_path, 'train', subtrack_len=-1, device=device, linkage_window=24, dtype=torch.float16, name="MOT20")
+# mot20 = MotDataset(mot20_path, 'train', subtrack_len=-1, device=device, linkage_window=24, dtype=torch.float16, name="MOT20")
+mot20 = MotDataset(mot20_path, 'train', subtrack_len=100, device=device, linkage_window=48, dtype=torch.float32, name="MOT17",
+                   detection_file_name='gt.txt', detection_file_folder='gt')
 
 track = mot20[1]
 
-graph = build_graph(**track.get_data(), device=device, dtype=torch.float16)
+# graph = build_graph(**track.get_data(), device=device, dtype=torch.float16)
+graph = build_graph(**track.get_data(), device=device, dtype=torch.float32)
 
 save_path = os.path.normpath(os.path.join("saves",*(str(track).split('/'))[0:-1]))
 if not os.path.exists(save_path):

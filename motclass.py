@@ -331,6 +331,7 @@ class MotDataset(Dataset):
     def __init__(self,
                  dataset_path,
                  split,
+                 detection_file_folder ="det",
                  detection_file_name="det.txt",
                  images_directory="img1",
                  name=None,
@@ -343,6 +344,7 @@ class MotDataset(Dataset):
                  dtype=torch.float32):
         self.dataset_dir = dataset_path
         self.split = split
+        self.detection_file_folder = detection_file_folder
         self.detection_file_name = detection_file_name
         self.images_directory = images_directory
         self.det_resize = det_resize
@@ -381,7 +383,7 @@ class MotDataset(Dataset):
 
         for track in self.tracklist:
             track_path = os.path.join(self.dataset_dir, self.split, track)
-            detections_file = os.path.normpath(os.path.join(track_path, "det", self.detection_file_name))
+            detections_file = os.path.normpath(os.path.join(track_path, self.detection_file_folder, self.detection_file_name))
             detections = self._read_detections(detections_file)
             detections = [detections[frame] for frame in sorted(detections.keys())]
             all_detections += [detections]
