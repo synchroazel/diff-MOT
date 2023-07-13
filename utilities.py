@@ -92,3 +92,12 @@ def save_graph(graph, track):
         pickle.dump(graph.cpu(), f)
 
     print("[INFO] Graph saved as " + file_name)
+
+
+def load_graph(pickle_path):
+    with open(pickle_path, 'rb') as f:
+        graph = pickle.load(f)
+
+    print("[INFO] Graph loaded from " + pickle_path)
+
+    return graph

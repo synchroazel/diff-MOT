@@ -22,6 +22,7 @@ LINKAGE_TYPES = {
 # adjacency_list, flattened_node_features, frame_times, centers_coords
 
 def build_graph(adjacency_list: torch.Tensor,
+                gt_adjacency_list: torch.Tensor,
                 node_features: torch.Tensor,
                 frame_times: torch.Tensor,
                 detections_coords: torch.Tensor,
@@ -33,6 +34,7 @@ def build_graph(adjacency_list: torch.Tensor,
     This function's purpose is to process the output of `track.get_data()` to build an appropriate graph.
 
     :param adjacency_list: tensor which represents the adjacency list. This will be used as 'edge_index'
+    :param gt_adjacency_list: tensor which represents the ground truth adjacency list
     :param node_features: tensor which represents the node image
     :param frame_times: time distances of the frames
     :param detections_coords: coordinates of the detections bboxes
@@ -128,9 +130,14 @@ def build_graph(adjacency_list: torch.Tensor,
 
     # detections_dist = torch.cdist(detections_coords.to(torch.float32), detections_coords.to(torch.float32)).to(dtype)
 
-    detections_dist = torch.cdist(detections_coords, detections_coords, p=2).to('cpu')
-    # input("before indexing")
-    # # Create a 1D Tensor with the distances of the detections ordered as the edges in the adj list
+    # torch.cdist is not currently implemented on MPS - fallback to cpu in case of MPS device
+    if device == torch.device("mps"):
+        detections_coords = detections_coords.cpu()
+
+    detections_dist = torch.cdist(detections_coords.float(),
+                                  detections_coords.float(), p=2).to('cpu')
+
+    # Create a 1D Tensor with the distances of the detections ordered as the edges in the adj list
     a = adjacency_list[:, 0].to('cpu').to(torch.long)
     b = adjacency_list[:, 1].to('cpu').to(torch.long)
     partial_edge_attributes = detections_dist[a, b]
@@ -146,11 +153,17 @@ def build_graph(adjacency_list: torch.Tensor,
     # GRAPH building
     ###
     # input("edges moved to gpu")
+
+    # Prepare for pyg_data.Data
+    adjacency_list = adjacency_list.t().contiguous(),
+    gt_adjacency_list = gt_adjacency_list.t().contiguous() if gt_adjacency_list is not None else None
+
     graph = pyg_data.Data(
         detections=node_features,
         num_nodes=number_of_nodes,
         times=frame_times,
-        edge_index=adjacency_list.t().contiguous(),
+        edge_index=adjacency_list,
+        gt_edge_index=gt_adjacency_list,
         edge_attr=partial_edge_attributes
     )
 
@@ -172,7 +185,6 @@ class MotTrack:
 
         self.detections = detections
         self.images_list = images_list
-
         self.det_resize = det_resize
         self.linkage_window = linkage_window
         self.subtrack_len = subtrack_len
@@ -235,6 +247,10 @@ class MotTrack:
         flattened_node_features = torch.zeros((number_of_detections, 3, self.det_resize[1], self.det_resize[0]),
                                               dtype=self.dtype).to(self.device)
 
+        """
+        Detections processing
+        """
+
         # Process all frames images
         for image in pbar:
             nodes = 0
@@ -242,9 +258,9 @@ class MotTrack:
 
             image = Image.open(os.path.normpath(image))  # all image detections in the current frame
 
-            for bbox in self.detections[i]:
+            for detection in self.detections[i]:
                 nodes += 1
-                bbox = box_convert(torch.tensor(bbox), "xywh", "xyxy").tolist()
+                bbox = box_convert(torch.tensor(detection['bbox']), "xywh", "xyxy").tolist()
 
                 detection = image.crop(bbox)
                 detection = detection.resize(self.det_resize)
@@ -280,7 +296,7 @@ class MotTrack:
         # Cumulative sum of the number of nodes per frame, used in the building of edge_index
         n_sum = [0] + np.cumsum(self.n_nodes).tolist()
 
-        for i in tqdm(range(self.n_frames), desc="Linking nodes"):  # for each frame in the track
+        for i in tqdm(range(self.n_frames), desc="Linking all nodes"):  # for each frame in the track
             for j in range(self.n_nodes[i]):  # for each detection of that frame (i)
                 for k in range(self.n_frames):  # for each frame in the track
 
@@ -308,11 +324,59 @@ class MotTrack:
                         )
 
         # Prepare the edge index tensor for pytorch geometric
-        adjacency_list = torch.tensor(adjacency_list).to(torch.int16).to(self.device)  # .t().contiguous()
+        adjacency_list = torch.tensor(adjacency_list).to(torch.int16).to(self.device)
 
         print(f"[INFO] {self.n_frames} frames")
         print(f"[INFO] {len(flattened_node_features)} total nodes")
         print(f"[INFO] {len(adjacency_list)} total edges")
+
+        """
+        Node linkage - ground truth
+        """
+
+        gt_adjacency_list = None
+
+        # If detections ids are available (!= -1)
+        if self.detections[0][0]['id'] != -1:
+
+            gt_adjacency_list = list()
+
+            # Get list of all gt detections ids
+            gt_detections_ids = list(set([detection['id'] for frame in self.detections for detection in frame]))
+
+            all_paths = list()
+
+            # Iterate over all the detections ids (aka over all gr trajectories)
+            for det_id in gt_detections_ids:
+
+                cur_path = list()
+
+                # Iterate over all frames and all detections in each
+                for i in range(self.n_frames):
+                    for j in range(self.n_nodes[i]):
+
+                        # Simply add to a list the # of the detection with that id
+                        if self.detections[i][j]['id'] == det_id:
+                            cur_path.append(j + n_sum[i])
+
+                # all_paths wll be a list of lists, each list containing the detections ids of a gt trajectory
+                all_paths.append(cur_path)
+
+            print(f"[INFO] {len(all_paths)} gt trajectories found")
+
+            # Fill gt_adjacency_list using the detections in all_paths
+            for path in all_paths:
+                for i in range(len(path) - 1):
+                    gt_adjacency_list.append([path[i], path[i + 1]])
+                    gt_adjacency_list.append([path[i + 1], path[i]])
+
+            # Prepare the edge index tensor for pytorch geometric
+            gt_adjacency_list = torch.tensor(gt_adjacency_list).to(torch.int16).to(self.device)
+
+            print(f"[INFO] {len(gt_adjacency_list)} total gt edges ({len(all_paths)} trajectories)")
+
+        else:
+            print(f"[INFO] No ground truth adjacency list available")
 
         """
         Output section
@@ -320,6 +384,7 @@ class MotTrack:
 
         return {
             "adjacency_list": adjacency_list,
+            "gt_adjacency_list": gt_adjacency_list,
             "node_features": flattened_node_features,
             "frame_times": frame_times,
             "detections_coords": track_detections_coords
@@ -331,8 +396,7 @@ class MotDataset(Dataset):
     def __init__(self,
                  dataset_path,
                  split,
-                 detection_file_folder ="det",
-                 detection_file_name="det.txt",
+                 detections_file_folder="det",
                  images_directory="img1",
                  name=None,
                  det_resize=(70, 170),
@@ -344,8 +408,8 @@ class MotDataset(Dataset):
                  dtype=torch.float32):
         self.dataset_dir = dataset_path
         self.split = split
-        self.detection_file_folder = detection_file_folder
-        self.detection_file_name = detection_file_name
+        self.detections_file_folder = detections_file_folder
+        self.detections_file_name = detections_file_folder + ".txt"
         self.images_directory = images_directory
         self.det_resize = det_resize
         self.linkage_window = linkage_window
@@ -366,14 +430,17 @@ class MotDataset(Dataset):
     def _read_detections(det_file) -> dict:
         """Read detections into a dictionary"""
 
-        file = np.loadtxt(det_file, delimiter=",", usecols=(0, 2, 3, 4, 5))
+        file = np.loadtxt(det_file, delimiter=",")  # , usecols=tuple(range(5)))
 
         detections = {}
         for det in file:
             frame = int(det[0])
+            id = int(det[1])
+            bbox = det[2:6].tolist()
             if frame not in detections:
                 detections[frame] = []
-            detections[frame].append(det[1:].tolist())
+
+            detections[frame].append({"id": id, "bbox": bbox})
 
         return detections
 
@@ -383,7 +450,8 @@ class MotDataset(Dataset):
 
         for track in self.tracklist:
             track_path = os.path.join(self.dataset_dir, self.split, track)
-            detections_file = os.path.normpath(os.path.join(track_path, self.detection_file_folder, self.detection_file_name))
+            detections_file = os.path.normpath(
+                os.path.join(track_path, self.detections_file_folder, self.detections_file_name))
             detections = self._read_detections(detections_file)
             detections = [detections[frame] for frame in sorted(detections.keys())]
             all_detections += [detections]
@@ -397,6 +465,8 @@ class MotDataset(Dataset):
             frames_per_track.append(len(images_list))
             all_images += [images_list]
 
+        # IF NO subtrack_len is provided, RETURN THE WHOLE TRACK
+
         if self.subtrack_len == -1:
             return MotTrack(detections=all_detections[idx],
                             images_list=all_images[idx],
@@ -406,6 +476,8 @@ class MotDataset(Dataset):
                             device=self.device,
                             dtype=self.dtype,
                             name=self.name + "/track_" + str(self.tracklist[idx]))
+
+        # IF subtrack_len is provided, RETURN THE #idx BATCH
 
         if self.subtrack_len > 0:
 

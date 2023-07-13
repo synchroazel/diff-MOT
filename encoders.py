@@ -10,7 +10,7 @@ class ImgEncoder:
     Takes in an image and model name from torchvision.models and returns a feature vector.
     """
 
-    def __init__(self, model_name: str, weights: str, device: str):
+    def __init__(self, model_name: str, weights: str = "DEFAULT", device: str = "cpu"):
         self.model_name = model_name.lower()
         self.weights = 'DEFAULT'
         self.device = device
