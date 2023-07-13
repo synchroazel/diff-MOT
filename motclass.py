@@ -396,7 +396,8 @@ class MotDataset(Dataset):
     def __init__(self,
                  dataset_path,
                  split,
-                 detections_file_folder="det",
+                 detections_file_folder="gt",
+                 detections_file_name="gt.txt",
                  images_directory="img1",
                  name=None,
                  det_resize=(70, 170),
@@ -409,7 +410,7 @@ class MotDataset(Dataset):
         self.dataset_dir = dataset_path
         self.split = split
         self.detections_file_folder = detections_file_folder
-        self.detections_file_name = detections_file_folder + ".txt"
+        self.detections_file_name = detections_file_name
         self.images_directory = images_directory
         self.det_resize = det_resize
         self.linkage_window = linkage_window
