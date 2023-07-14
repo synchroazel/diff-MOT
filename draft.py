@@ -11,11 +11,12 @@ from utilities import get_best_device
 device = get_best_device()
 
 # mot20_path = "/media/dmmp/vid+backup/Data/MOT20"
-mot20_path = "/media/dmmp/vid+backup/Data/MOT17"
+# mot20_path = "/media/dmmp/vid+backup/Data/MOT17"
+mot20_path = "data/MOT17"
 # mot20 = MotDataset(mot20_path, 'train', linkage_window=LINKAGE_TYPES["ALL"], device=device, det_resize=(32, 32))
 # mot20 = MotDataset(mot20_path, 'train', subtrack_len=-1, device=device, linkage_window=24, dtype=torch.float16, name="MOT20")
-mot20 = MotDataset(mot20_path, 'train', subtrack_len=100, device=device, linkage_window=48, dtype=torch.float32, name="MOT17",
-                   detection_file_name='gt.txt', detection_file_folder='gt')
+mot20 = MotDataset(mot20_path, 'train', subtrack_len=300, device=device, linkage_window=48, dtype=torch.float32, name="MOT17",
+                   detections_file_name='gt.txt', detections_file_folder='gt')
 
 track = mot20[1]
 

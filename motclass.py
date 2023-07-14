@@ -131,11 +131,11 @@ def build_graph(adjacency_list: torch.Tensor,
     # detections_dist = torch.cdist(detections_coords.to(torch.float32), detections_coords.to(torch.float32)).to(dtype)
 
     # torch.cdist is not currently implemented on MPS - fallback to cpu in case of MPS device
-    if device == torch.device("mps"):
-        detections_coords = detections_coords.cpu()
+    # if device == torch.device("mps"):
+    #     detections_coords = detections_coords.float().cpu()
 
-    detections_dist = torch.cdist(detections_coords.float(),
-                                  detections_coords.float(), p=2).to('cpu')
+    detections_dist = torch.cdist(detections_coords,
+                                  detections_coords, p=2).to('cpu')
 
     # Create a 1D Tensor with the distances of the detections ordered as the edges in the adj list
     a = adjacency_list[:, 0].to('cpu').to(torch.long)
@@ -155,7 +155,7 @@ def build_graph(adjacency_list: torch.Tensor,
     # input("edges moved to gpu")
 
     # Prepare for pyg_data.Data
-    adjacency_list = adjacency_list.t().contiguous(),
+    adjacency_list = adjacency_list.t().contiguous()
     gt_adjacency_list = gt_adjacency_list.t().contiguous() if gt_adjacency_list is not None else None
 
     graph = pyg_data.Data(
@@ -364,6 +364,8 @@ class MotTrack:
 
             print(f"[INFO] {len(all_paths)} gt trajectories found")
 
+            # TODO 'to_dense()' ?
+
             # Fill gt_adjacency_list using the detections in all_paths
             for path in all_paths:
                 for i in range(len(path) - 1):
@@ -488,18 +490,24 @@ class MotDataset(Dataset):
             for n_frames in frames_per_track:
                 batches, remainder = divmod(n_frames, self.subtrack_len)
 
-                frames_per_batch = frames_per_batch + [self.subtrack_len] * batches + [remainder]
+                frames_per_batch = frames_per_batch + [self.subtrack_len] * batches
+
+                if remainder > 0:
+                    frames_per_batch = frames_per_batch + [remainder]
 
             if idx > len(frames_per_batch):
-                raise IndexError(f"{len(frames_per_batch)} subtracks can be created with "
-                                 f"subtrack_len={self.subtrack_len}, but batch #{idx} was requested. ")
+                raise IndexError(
+                    f"{len(frames_per_batch)} subtracks can be created with subtrack_len={self.subtrack_len}, but batch #{idx} was requested. ")
 
             # Pick initial starting and ending frames considering all frames together
-            starting_frame = np.cumsum(frames_per_batch)[idx] if idx > 0 else 0
-            ending_frame = starting_frame + frames_per_batch[idx + 1]
+            frames_per_batch_sum = [0] + list(np.cumsum(frames_per_batch))
+            starting_frame = frames_per_batch_sum[idx]
+            ending_frame = frames_per_batch_sum[idx + 1]
 
             if self.debug:
                 print(f"[DEBUG] From {starting_frame} to {ending_frame}")
+
+            # TODO: verify sliding window
 
             # These needs to be corrected, we need:
             #   - the track number
@@ -512,20 +520,27 @@ class MotDataset(Dataset):
 
             # Get the actual starting and ending frames in the batch
             #  (this is done by subtracting the cumulative sum of frames per track)
-            starting_frame = starting_frame - np.cumsum(frames_per_track)[cur_track - 1] \
-                if cur_track > 0 else starting_frame
 
-            ending_frame = ending_frame - np.cumsum(frames_per_track)[cur_track - 1] \
-                if cur_track > 0 else ending_frame
+            frames_sum_sofar = (np.cumsum(frames_per_track) + [0])[cur_track - 1]
 
             if self.debug:
-                print(f"[DEBUG] Frames per batch: {frames_per_track} (globally)")
-                print(f"[DEBUG] Cumsum of frames per track: {np.cumsum(frames_per_track)}")
+                print("[DEBUG] Sum of frames sum so far:", frames_sum_sofar)
+
+            if cur_track > 0:
+                starting_frame = starting_frame - frames_sum_sofar
+
+            if cur_track > 0:  # and (ending_frame - frames_sum_sofar != 0):
+                ending_frame = ending_frame - frames_sum_sofar
+
+            if self.debug:
+                # print(f"[DEBUG] Frames per batch: {frames_per_track} (globally)")
+                # print(f"[DEBUG] Cumsum of frames per track: {np.cumsum(frames_per_track)}")
                 print(f"[DEBUG] Starting in track: {cur_track}")
                 print(f"[DEBUG] Ending in track: {next_track}")
                 print(f"\n[DEBUG] From {starting_frame} to {ending_frame} of track {cur_track}")
 
-            print(f"[INFO] Subtrack #{idx} (track #{cur_track} (frames {starting_frame} - {ending_frame})")
+            print(
+                f"[INFO] Batch #{idx} | track #{cur_track + 1} (frames {starting_frame}/{frames_per_track[cur_track]} - {ending_frame}/{frames_per_track[cur_track]})")
 
             return MotTrack(detections=all_detections[cur_track][starting_frame:ending_frame],
                             images_list=all_images[cur_track][starting_frame:ending_frame],
