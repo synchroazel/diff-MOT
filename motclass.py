@@ -9,9 +9,10 @@ from torch.utils.data import Dataset
 from torchvision import transforms
 from torchvision.ops import box_convert
 from tqdm import tqdm
-from encoders import ImgEncoder
 
-from utilities import minkowski_distance
+import logging
+
+logging.basicConfig(format='[%(levelname)s] %(message)s', level=logging.INFO)
 
 LINKAGE_TYPES = {
     "ADJACENT": 0,
@@ -23,23 +24,21 @@ LINKAGE_TYPES = {
 
 def build_graph(adjacency_list: torch.Tensor,
                 gt_adjacency_list: torch.Tensor,
-                node_features: torch.Tensor,
+                y: torch.Tensor,
+                detections: torch.Tensor,
                 frame_times: torch.Tensor,
                 detections_coords: torch.Tensor,
-                device: str,
-                feature_extractor: str = "resnet101",
-                weights: str = "DEFAULT",
-                dtype=torch.float32) -> pyg_data.Data:
+                device: torch.device,
+                dtype: torch.dtype = torch.float32) -> pyg_data.Data:
     """
     This function's purpose is to process the output of `track.get_data()` to build an appropriate graph.
 
     :param adjacency_list: tensor which represents the adjacency list. This will be used as 'edge_index'
     :param gt_adjacency_list: tensor which represents the ground truth adjacency list
-    :param node_features: tensor which represents the node image
+    :param y
+    :param detections: tensor which represents the node image
     :param frame_times: time distances of the frames
     :param detections_coords: coordinates of the detections bboxes
-    :param feature_extractor: feature extractor to use for calculating feature distances
-    :param weights: weights to use for the feature extractor
     :param device: device to use, either mps, cuda or cpu
     :param dtype: data type to use
     :return: a Pytorch Geometric graph object
@@ -47,8 +46,8 @@ def build_graph(adjacency_list: torch.Tensor,
 
     batch_size = 8  # used throughout edges and nodes processing
 
-    node_features = node_features.to(dtype)
-    number_of_nodes = len(node_features)
+    detections = detections.to(dtype)
+    number_of_nodes = len(detections)
 
     # for distance calculation
     detections_coords = box_convert(torch.clone(detections_coords).detach(), "xyxy", "cxcywh")
@@ -57,36 +56,6 @@ def build_graph(adjacency_list: torch.Tensor,
     # centers[:,(0,1)] = detections_coords[:,(0,1)] / 1000
     # del detections_coords
     detections_coords = detections_coords[:, (0, 1)] / 1000
-
-    """
-    NODES processing - image features extraction (using batches)
-    """
-
-    """ Image feature extraction [ON HOLD]
-
-    feature_extractor_net = ImgEncoder(feature_extractor, weights=weights, device=device)
-
-    node_features = None
-    batch_size = 8
-
-    pbar = tqdm(range(0, number_of_nodes, batch_size), desc="Processing nodes")
-
-    for i in pbar:
-
-        if i + batch_size > number_of_nodes:
-            batch_tensor = flattened_node[i:, :, :, :]
-        else:
-            batch_tensor = flattened_node[i:i + batch_size, :, :, :]
-        with torch.no_grad():
-            f = feature_extractor_net(batch_tensor)
-        if node_features is None:
-            node_features = torch.zeros(f.shape[1]).to(device)  # otherwise we cannot stack
-
-        node_features = torch.vstack((node_features, f))
-
-    node_features = node_features[1:, :]
-
-    """
 
     """
     EDGES processing - edge features computation
@@ -98,7 +67,7 @@ def build_graph(adjacency_list: torch.Tensor,
     n_batches = int(np.ceil(adjacency_list.shape[0] / batch_size))
 
     # Precompute edge features, `vstack` causes memory leak
-    final_edge_attributes = torch.zeros((edge_partial_attributes.shape[0], node_features.shape[1] + 1),
+    final_edge_attributes = torch.zeros((edge_partial_attributes.shape[0], detections.shape[1] + 1),
                                         dtype=torch.float16)
     final_edge_attributes[:, 0] = edge_partial_attributes.t()
     del edge_partial_attributes
@@ -114,8 +83,8 @@ def build_graph(adjacency_list: torch.Tensor,
             if element_index >= adjacency_list.shape[0]:
                 break
 
-            node1 = node_features[adjacency_list[element_index][0]]
-            node2 = node_features[adjacency_list[element_index][1]]
+            node1 = detections[adjacency_list[element_index][0]]
+            node2 = detections[adjacency_list[element_index][1]]
 
             difference = (node1 - node2).to(torch.float16)
 
@@ -138,17 +107,17 @@ def build_graph(adjacency_list: torch.Tensor,
                                   detections_coords, p=2).to('cpu')
 
     # Create a 1D Tensor with the distances of the detections ordered as the edges in the adj list
-    a = adjacency_list[:, 0].to('cpu').to(torch.long)
-    b = adjacency_list[:, 1].to('cpu').to(torch.long)
-    partial_edge_attributes = detections_dist[a, b]
+    a = adjacency_list[:, 0].to('cpu').to(torch.int64)
+    b = adjacency_list[:, 1].to('cpu').to(torch.int64)
+    partial_edge_features = detections_dist[a, b]
     # input("after indexing")
     del detections_dist
     del a
     del b
     # input("detection dist deleted")
 
-    partial_edge_attributes = partial_edge_attributes.to(device) * 1000
-    # print(partial_edge_attributes)
+    partial_edge_features = partial_edge_features.to(device) * 1000
+    # print(partial_edge_features)
     ###
     # GRAPH building
     ###
@@ -158,16 +127,15 @@ def build_graph(adjacency_list: torch.Tensor,
     adjacency_list = adjacency_list.t().contiguous()
     gt_adjacency_list = gt_adjacency_list.t().contiguous() if gt_adjacency_list is not None else None
 
-    graph = pyg_data.Data(
-        detections=node_features,
-        num_nodes=number_of_nodes,
-        times=frame_times,
+    return pyg_data.Data(
         edge_index=adjacency_list,
         gt_edge_index=gt_adjacency_list,
-        edge_attr=partial_edge_attributes
+        y=y,
+        detections=detections,
+        num_nodes=number_of_nodes,
+        times=frame_times,
+        edge_features=partial_edge_features
     )
-
-    return graph
 
 
 class MotTrack:
@@ -179,9 +147,13 @@ class MotTrack:
                  det_resize: tuple,
                  linkage_window: int,
                  subtrack_len: int,
-                 device: str,
-                 dtype=torch.float32,
-                 name="track"):
+                 device: torch.device,
+                 dtype: torch.dtype = torch.float32,
+                 logging_lv: int = logging.INFO,
+                 name: str = "track"):
+
+        # Set logging level
+        logging.basicConfig(level=logging_lv)
 
         self.detections = detections
         self.images_list = images_list
@@ -193,13 +165,14 @@ class MotTrack:
         self.n_frames = len(images_list)
         self.n_nodes = []
         self.dtype = dtype
+        self.logging_lv = logging_lv
 
         if self.linkage_window > self.n_frames:
-            print(f"[WARN] `linkage window` was set to {self.linkage_window}\
-            but track has {self.n_frames} frames. Setting `linkage window` to {self.n_frames}")
+            logging.warning(f"`linkage window` was set to {self.linkage_window} but track has {self.n_frames} frames."
+                            f"Setting `linkage window` to {self.n_frames}")
             self.linkage_window = self.n_frames
 
-        print(f"[INFO] Track has {self.n_frames} frames")
+        logging.info(f"Track has {self.n_frames} frames")
 
     def __str__(self):
 
@@ -216,7 +189,7 @@ class MotTrack:
 
         return name
 
-    def get_data(self) -> dict:
+    def get_data(self):
         """
         This function performs two steps:
 
@@ -229,13 +202,12 @@ class MotTrack:
         :return: a dict: with keys (adjacency_matrix, node_features, frame_times, detections_coords)
         """
 
-        #
-        # Detections extraction
-        #
+        """
+        Detections processing
+        """
 
-        # all detections coordinates (xyxy) across all frames
-
-        pbar = tqdm(self.images_list)
+        pbar = tqdm(self.images_list) \
+            if self.logging_lv <= logging.INFO else self.images_list
 
         i = 0  # frame counter
         j = 0
@@ -247,14 +219,12 @@ class MotTrack:
         flattened_node_features = torch.zeros((number_of_detections, 3, self.det_resize[1], self.det_resize[0]),
                                               dtype=self.dtype).to(self.device)
 
-        """
-        Detections processing
-        """
-
         # Process all frames images
         for image in pbar:
             nodes = 0
-            pbar.set_description(f"Reading frame {image}")
+
+            if self.logging_lv <= logging.INFO:
+                pbar.set_description(f"[TQDM] Reading frame {image}")
 
             image = Image.open(os.path.normpath(image))  # all image detections in the current frame
 
@@ -292,49 +262,82 @@ class MotTrack:
         #   Connect frames detections with detections up to `linkage_window` frames in the future
 
         adjacency_list = list()  # Empty list to store edge indices
-
-        # Cumulative sum of the number of nodes per frame, used in the building of edge_index
         n_sum = [0] + np.cumsum(self.n_nodes).tolist()
 
-        for i in tqdm(range(self.n_frames), desc="Linking all nodes"):  # for each frame in the track
-            for j in range(self.n_nodes[i]):  # for each detection of that frame (i)
-                for k in range(self.n_frames):  # for each frame in the track
+        pbar = tqdm(range(self.n_frames), desc="[TQDM] Linking all nodes") \
+            if self.logging_lv <= logging.INFO else range(self.n_frames)
 
-                    if self.linkage_window == -1:
-                        if k <= i:
-                            continue
+        for i in pbar:
+            current_n_sum = n_sum[i]
+            current_frame_nodes = self.n_nodes[i]
+            current_frame_nodes_indices = range(current_n_sum, current_n_sum + current_frame_nodes)
 
-                    if self.linkage_window == 0:
-                        if k != i + 1:
-                            continue
+            # Get the range of frames to link based on the linkage window
+            if self.linkage_window == -1:  # Link with all future frames
+                future_frames_range = range(i + 1, self.n_frames)
+            elif self.linkage_window == 0:  # Link with the next frame only
+                future_frames_range = range(i + 1, min(i + 2, self.n_frames))
+            else:  # Link with a window of future frames
+                future_frames_range = range(i + 1, min(i + self.linkage_window + 1, self.n_frames))
 
-                    if self.linkage_window > 0:
-                        if k <= i:
-                            continue
-                        if k > i + self.linkage_window:
-                            break
+            for k in future_frames_range:
+                future_n_sum = n_sum[k]
+                future_frame_nodes = self.n_nodes[k]
+                future_frame_nodes_indices = range(future_n_sum, future_n_sum + future_frame_nodes)
 
-                    for l in range(self.n_nodes[k]):  # for each detection of the frame (k)
+                # For each combination of current node and future node, create an edge
+                for j in current_frame_nodes_indices:
+                    for l in future_frame_nodes_indices:
+                        adjacency_list.append([j, l])
+                        adjacency_list.append([l, j])
 
-                        adjacency_list.append(
-                            [j + n_sum[i], l + n_sum[k]]
-                        )
-                        adjacency_list.append(
-                            [l + n_sum[k], j + n_sum[i]]
-                        )
-
-        # Prepare the edge index tensor for pytorch geometric
         adjacency_list = torch.tensor(adjacency_list).to(torch.int16).to(self.device)
 
-        print(f"[INFO] {self.n_frames} frames")
-        print(f"[INFO] {len(flattened_node_features)} total nodes")
-        print(f"[INFO] {len(adjacency_list)} total edges")
+        # adjacency_list = list()  # Empty list to store edge indices
+        #
+        # # Cumulative sum of the number of nodes per frame, used in the building of edge_index
+        # n_sum = [0] + np.cumsum(self.n_nodes).tolist()
+        #
+        # for i in tqdm(range(self.n_frames), desc="Linking all nodes"):  # for each frame in the track
+        #     for j in range(self.n_nodes[i]):  # for each detection of that frame (i)
+        #         for k in range(self.n_frames):  # for each frame in the track
+        #
+        #             if self.linkage_window == -1:
+        #                 if k <= i:
+        #                     continue
+        #
+        #             if self.linkage_window == 0:
+        #                 if k != i + 1:
+        #                     continue
+        #
+        #             if self.linkage_window > 0:
+        #                 if k <= i:
+        #                     continue
+        #                 if k > i + self.linkage_window:
+        #                     break
+        #
+        #             for l in range(self.n_nodes[k]):  # for each detection of the frame (k)
+        #
+        #                 adjacency_list.append(
+        #                     [j + n_sum[i], l + n_sum[k]]
+        #                 )
+        #                 adjacency_list.append(
+        #                     [l + n_sum[k], j + n_sum[i]]
+        #                 )
+        #
+        # # Prepare the edge index tensor for pytorch geometric
+        # adjacency_list = torch.tensor(adjacency_list).to(torch.int16).to(self.device)
+
+        logging.info(f"{self.n_frames} frames")
+        logging.info(f"{len(flattened_node_features)} total nodes")
+        logging.info(f"{len(adjacency_list)} total edges")
 
         """
         Node linkage - ground truth
         """
 
         gt_adjacency_list = None
+        y = None
 
         # If detections ids are available (!= -1)
         if self.detections[0][0]['id'] != -1:
@@ -362,9 +365,7 @@ class MotTrack:
                 # all_paths wll be a list of lists, each list containing the detections ids of a gt trajectory
                 all_paths.append(cur_path)
 
-            print(f"[INFO] {len(all_paths)} gt trajectories found")
-
-            # TODO 'to_dense()' ?
+            logging.info(f"{len(all_paths)} gt trajectories found")
 
             # Fill gt_adjacency_list using the detections in all_paths
             for path in all_paths:
@@ -375,10 +376,15 @@ class MotTrack:
             # Prepare the edge index tensor for pytorch geometric
             gt_adjacency_list = torch.tensor(gt_adjacency_list).to(torch.int16).to(self.device)
 
-            print(f"[INFO] {len(gt_adjacency_list)} total gt edges ({len(all_paths)} trajectories)")
+            logging.info(f"{len(gt_adjacency_list)} total gt edges ({len(all_paths)} trajectories)")
+
+            # Build `y` tensor to compare predictions with gt
+            gt_adjacency_set = set([tuple(x) for x in gt_adjacency_list.tolist()])
+
+            y = torch.tensor([1 if tuple(x) in gt_adjacency_set else 0 for x in adjacency_list])
 
         else:
-            print(f"[INFO] No ground truth adjacency list available")
+            logging.info(f"No ground truth adjacency list available")
 
         """
         Output section
@@ -387,7 +393,8 @@ class MotTrack:
         return {
             "adjacency_list": adjacency_list,
             "gt_adjacency_list": gt_adjacency_list,
-            "node_features": flattened_node_features,
+            "y": y,
+            "detections": flattened_node_features,
             "frame_times": frame_times,
             "detections_coords": track_detections_coords
         }
@@ -396,18 +403,18 @@ class MotTrack:
 class MotDataset(Dataset):
 
     def __init__(self,
-                 dataset_path,
-                 split,
-                 detections_file_folder="gt",
-                 detections_file_name="gt.txt",
-                 images_directory="img1",
-                 name=None,
-                 det_resize=(70, 170),
-                 linkage_window=-1,
-                 subtrack_len=-1,
-                 subtrack_number=-1,
-                 debug=False,
-                 device="cpu",
+                 dataset_path: str,
+                 split: str,
+                 detections_file_folder: str = "gt",
+                 detections_file_name: str = "gt.txt",
+                 images_directory: str = "img1",
+                 name: str = None,
+                 det_resize: tuple = (70, 170),
+                 linkage_window: int = -1,
+                 subtrack_len: int = -1,
+                 subtrack_number: int = -1,
+                 dl_mode: bool = False,
+                 device: torch.device = torch.device("cpu"),
                  dtype=torch.float32):
         self.dataset_dir = dataset_path
         self.split = split
@@ -419,9 +426,8 @@ class MotDataset(Dataset):
         self.subtrack_len = subtrack_len
         self.subtrack_number = subtrack_number
         self.device = device
-        self.debug = debug
+        self.dl_mode = dl_mode
         self.dtype = dtype
-
         self.name = dataset_path.split('/')[-1] if name is None else name
 
         assert split in os.listdir(self.dataset_dir), \
@@ -484,69 +490,43 @@ class MotDataset(Dataset):
 
         if self.subtrack_len > 0:
 
-            frames_per_batch = list()
+            # Precompute the start frames and tracks if they haven't been computed already
+            if not hasattr(self, 'start_frames') or not hasattr(self, 'tracks'):
+                self.start_frames = []
+                self.tracks = []
+                for track, n_frames in enumerate(frames_per_track):
+                    for start_frame in range(n_frames - self.subtrack_len + 1):
+                        self.start_frames.append(start_frame)
+                        self.tracks.append(track)
 
-            # Get a list with the number of frames per batch (handling shorter tracks)
-            for n_frames in frames_per_track:
-                batches, remainder = divmod(n_frames, self.subtrack_len)
-
-                frames_per_batch = frames_per_batch + [self.subtrack_len] * batches
-
-                if remainder > 0:
-                    frames_per_batch = frames_per_batch + [remainder]
-
-            if idx > len(frames_per_batch):
+            if idx >= len(self.start_frames):
                 raise IndexError(
-                    f"{len(frames_per_batch)} subtracks can be created with subtrack_len={self.subtrack_len}, but batch #{idx} was requested. ")
+                    f"{len(self.start_frames)} subtracks can be created with subtrack_len={self.subtrack_len}, but batch #{idx} was requested. ")
 
-            # Pick initial starting and ending frames considering all frames together
-            frames_per_batch_sum = [0] + list(np.cumsum(frames_per_batch))
-            starting_frame = frames_per_batch_sum[idx]
-            ending_frame = frames_per_batch_sum[idx + 1]
+            # Get the starting frame and track for this batch
+            starting_frame = self.start_frames[idx]
+            cur_track = self.tracks[idx]
+            ending_frame = starting_frame + self.subtrack_len
 
-            if self.debug:
-                print(f"[DEBUG] From {starting_frame} to {ending_frame}")
+            logging.debug(f"From {starting_frame} to {ending_frame}")
 
-            # TODO: verify sliding window
+            logging.debug(f"Starting in track: {cur_track}")
+            logging.debug(f"From {starting_frame} to {ending_frame} of track {cur_track}")
 
-            # These needs to be corrected, we need:
-            #   - the track number
-            #   - the starting frame in the batch
-            #   - the ending frame in the batch
+            logging.info(
+                f"Batch #{idx} | track #{cur_track + 1} (frames {starting_frame}/{frames_per_track[cur_track]} - {ending_frame}/{frames_per_track[cur_track]})")
 
-            # Get the track where the batch starts and ends
-            cur_track = np.argmax((np.cumsum(frames_per_track) - starting_frame) > 0)
-            next_track = np.argmax((np.cumsum(frames_per_track) - ending_frame) > 0)
+            track = MotTrack(detections=all_detections[cur_track][starting_frame:ending_frame],
+                             images_list=all_images[cur_track][starting_frame:ending_frame],
+                             det_resize=self.det_resize,
+                             linkage_window=self.linkage_window,
+                             subtrack_len=self.subtrack_len,
+                             device=self.device,
+                             dtype=self.dtype,
+                             logging_lv=logging.WARNING if self.dl_mode else logging.INFO,
+                             name=self.name + "/track_" + str(self.tracklist[cur_track]) + "/subtrack_" + str(idx))
 
-            # Get the actual starting and ending frames in the batch
-            #  (this is done by subtracting the cumulative sum of frames per track)
-
-            frames_sum_sofar = (np.cumsum(frames_per_track) + [0])[cur_track - 1]
-
-            if self.debug:
-                print("[DEBUG] Sum of frames sum so far:", frames_sum_sofar)
-
-            if cur_track > 0:
-                starting_frame = starting_frame - frames_sum_sofar
-
-            if cur_track > 0:  # and (ending_frame - frames_sum_sofar != 0):
-                ending_frame = ending_frame - frames_sum_sofar
-
-            if self.debug:
-                # print(f"[DEBUG] Frames per batch: {frames_per_track} (globally)")
-                # print(f"[DEBUG] Cumsum of frames per track: {np.cumsum(frames_per_track)}")
-                print(f"[DEBUG] Starting in track: {cur_track}")
-                print(f"[DEBUG] Ending in track: {next_track}")
-                print(f"\n[DEBUG] From {starting_frame} to {ending_frame} of track {cur_track}")
-
-            print(
-                f"[INFO] Batch #{idx} | track #{cur_track + 1} (frames {starting_frame}/{frames_per_track[cur_track]} - {ending_frame}/{frames_per_track[cur_track]})")
-
-            return MotTrack(detections=all_detections[cur_track][starting_frame:ending_frame],
-                            images_list=all_images[cur_track][starting_frame:ending_frame],
-                            det_resize=self.det_resize,
-                            linkage_window=self.linkage_window,
-                            subtrack_len=self.subtrack_len,
-                            device=self.device,
-                            dtype=self.dtype,
-                            name=self.name + "/track_" + str(self.tracklist[cur_track]) + "/subtrack_" + str(idx))
+            if self.dl_mode:
+                return build_graph(**track.get_data(), device=self.device, dtype=self.dtype)
+            else:
+                return track
