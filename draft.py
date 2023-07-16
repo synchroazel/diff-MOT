@@ -1,7 +1,7 @@
 import torch
 from torch_geometric.transforms import ToDevice
 from tqdm import tqdm
-
+# from torch_geometric import  compile as Tcompile
 from model import Net
 from motclass import MotDataset, build_graph
 from utilities import get_best_device, save_graph
@@ -10,12 +10,14 @@ device = get_best_device()
 
 mot20_path = "/media/dmmp/vid+backup/Data/MOT20"
 
-
+dtype = torch.float16
 
 
 def train(model, train_loader, loss_function, optimizer, epochs, device):
     model = model.to(device)
     model.train()
+
+    #     model = Tcompile(model)
 
     pbar = tqdm(range(epochs))
 
@@ -52,19 +54,19 @@ l_size = 128
 epochs = 10
 learning_rate = 0.001
 
-model = Net(backbone, l_size, dtype=torch.float32)
+model = Net(backbone, l_size, dtype=dtype)
 
 loss_function = torch.nn.BCELoss()
-optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, eps=1e-4)
 
 mo20_train_dl = MotDataset(dataset_path=mot20_path,
                            split='train',
-                           subtrack_len=50,
+                           subtrack_len=25,
                            linkage_window=12,
                            detections_file_folder='gt',
                            detections_file_name='gt.txt',
                            device=device,
                            dl_mode=True,
-                           dtype=torch.float32)
+                           dtype=dtype)
 
 train(model, mo20_train_dl, loss_function, optimizer, epochs, device)

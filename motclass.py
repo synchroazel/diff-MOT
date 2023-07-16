@@ -48,13 +48,12 @@ def build_graph(adjacency_list: torch.Tensor,
 
     detections = detections.to(dtype)
     number_of_nodes = len(detections)
+    edge_attributes = torch.zeros(len(y), 2)
 
     # for distance calculation
     detections_coords = box_convert(torch.clone(detections_coords).detach(), "xyxy", "cxcywh")
 
-    # centers = torch.zeros((len(detections_coords),2), dtype=dtype, device=device)
-    # centers[:,(0,1)] = detections_coords[:,(0,1)] / 1000
-    # del detections_coords
+    # / 1000 is needed if we have 16bit floats, otherwise overflow will occur
     detections_coords = detections_coords[:, (0, 1)] / 1000
 
     """
@@ -105,18 +104,22 @@ def build_graph(adjacency_list: torch.Tensor,
 
     detections_dist = torch.cdist(detections_coords,
                                   detections_coords, p=2).to('cpu')
-
     # Create a 1D Tensor with the distances of the detections ordered as the edges in the adj list
     a = adjacency_list[:, 0].to('cpu').to(torch.int64)
     b = adjacency_list[:, 1].to('cpu').to(torch.int64)
-    partial_edge_features = detections_dist[a, b]
+    edge_attributes[:,0] = detections_dist[a, b]
+
+    detections_dist = torch.cdist(frame_times.to(dtype),
+                                  frame_times.to(dtype), p=2).to('cpu') / 1000
+    # Create a 1D Tensor with the distances of the detections ordered as the edges in the adj list
+    edge_attributes[:, 1] = detections_dist[a, b]
     # input("after indexing")
     del detections_dist
     del a
     del b
     # input("detection dist deleted")
 
-    partial_edge_features = partial_edge_features.to(device) * 1000
+    edge_attributes = 1 / (edge_attributes.to(device) * 1000 + 0.00001)
     # print(partial_edge_features)
     ###
     # GRAPH building
@@ -134,7 +137,7 @@ def build_graph(adjacency_list: torch.Tensor,
         detections=detections,
         num_nodes=number_of_nodes,
         times=frame_times,
-        edge_features=partial_edge_features
+        edge_attr=edge_attributes
     )
 
 
@@ -453,8 +456,9 @@ class MotDataset(Dataset):
 
         return detections
 
-    def __getitem__(self, idx):
-
+    def __getitem__(self, idx, step=None):
+        if step is None:
+            step =self.subtrack_len
         frames_per_track, all_detections, all_images = list(), list(), list()
 
         for track in self.tracklist:
@@ -476,7 +480,7 @@ class MotDataset(Dataset):
 
         # IF NO subtrack_len is provided, RETURN THE WHOLE TRACK
 
-        if self.subtrack_len == -1:
+        if self.subtrack_len <= 1:
             return MotTrack(detections=all_detections[idx],
                             images_list=all_images[idx],
                             det_resize=self.det_resize,
@@ -488,14 +492,14 @@ class MotDataset(Dataset):
 
         # IF subtrack_len is provided, RETURN THE #idx BATCH
 
-        if self.subtrack_len > 0:
+        else:
 
             # Precompute the start frames and tracks if they haven't been computed already
             if not hasattr(self, 'start_frames') or not hasattr(self, 'tracks'):
                 self.start_frames = []
                 self.tracks = []
                 for track, n_frames in enumerate(frames_per_track):
-                    for start_frame in range(n_frames - self.subtrack_len + 1):
+                    for start_frame in range(0, n_frames - self.subtrack_len + 1, step):
                         self.start_frames.append(start_frame)
                         self.tracks.append(track)
 

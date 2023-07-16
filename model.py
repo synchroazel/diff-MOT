@@ -1,5 +1,6 @@
 import torch
 import torch.nn.functional as F
+import torch_geometric.nn
 from efficientnet_pytorch import EfficientNet
 from torch import nn
 from torch_geometric.nn import MessagePassing
@@ -89,12 +90,25 @@ class EdgePredictor(torch.nn.Module):
 
 
 class Net(torch.nn.Module):
+    # we should use only layers that support edge features
+    layer_aliases = {
+    'GATConv':torch_geometric.nn.GATConv, # https://arxiv.org/abs/1710.10903
+        'GATv2Conv': torch_geometric.nn.GATv2Conv,  # https://arxiv.org/abs/2105.14491
+        'TransformerConv': torch_geometric.nn.TransformerConv,  # https://arxiv.org/abs/2009.03509
+        'GMMConv': torch_geometric.nn.GMMConv,  # https://arxiv.org/abs/1611.08402
+        # 'SplineConv': torch_geometric.nn.SplineConv,  # https://arxiv.org/abs/1711.08920
+        # 'NNConv': torch_geometric.nn.NNConv, # https://arxiv.org/abs/1704.01212
+        'CGConv': torch_geometric.nn.CGConv,  # https://journals.aps.org/prl/abstract/10.1103/PhysRevLett.120.145301
+        'PNAConv': torch_geometric.nn.PNAConv, # https://arxiv.org/abs/2004.05718
+        'GENConv': torch_geometric.nn.GENConv, # https://arxiv.org/abs/2006.07739
+        'GeneralConv': torch_geometric.nn.GeneralConv, # https://arxiv.org/abs/2011.08843
+    }
 
-    def __init__(self, backbone, layer_size, dtype = torch.float32):
+    def __init__(self, backbone, layer_size, layer_tipe='GATConv',dtype = torch.float32, **kwargs):
         super(Net, self).__init__()
         self.fextractor = ImgEncoder(backbone, dtype = dtype)
-        self.conv1 = GCNConv(2048, layer_size)  # TODO: dynamic n_features
-        self.conv2 = GCNConv(layer_size, layer_size)
+        self.conv1 = self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size, **kwargs)
+        self.conv2 = self.layer_aliases[layer_tipe](layer_size, layer_size, **kwargs)
         self.predictor = EdgePredictor(layer_size, layer_size)
         self.dtype = dtype
         self.to(dtype=dtype)
@@ -102,13 +116,12 @@ class Net(torch.nn.Module):
         data.x = self.fextractor(data.detections)
 
         x, edge_index = data.x, data.edge_index
-
-        x = self.conv1(x=x, edge_index=edge_index)
-        x = F.relu(x)
-        x = F.dropout(x, training=self.training)
+        x = self.conv1(x=x, edge_index=edge_index.to(torch.int64), edge_attr=data.edge_attr)
+        x = F.relu(x) # some layers already have activation, but not all of them
+        x = F.dropout(x, training=self.training, p=0.2) # not all layers have incorporated dropout, so we put it here
         x = self.conv2(x=x, edge_index=edge_index)
 
         # Use edge_index to find the corresponding node features in x
-        x_i, x_j = x[edge_index[0].to(torch.long)], x[edge_index[1].to(torch.long)]
+        x_i, x_j = x[edge_index[0].to(torch.int64)], x[edge_index[1].to(torch.int64)]
 
         return self.predictor(x_i, x_j)
