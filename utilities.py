@@ -1,5 +1,6 @@
 import os
 import pickle
+import sys
 
 import networkx as nx
 import numpy as np
@@ -101,3 +102,12 @@ def load_graph(pickle_path):
     print("[INFO] Graph loaded from " + pickle_path)
 
     return graph
+
+
+def sl_message(msg):
+    """ Print a message which stays on the same line if possible """
+    print('\033[K', end='')
+    print(msg, end='')
+    sys.stdout.flush()
+    print('\033[F', end='')
+    sys.stdout.flush()
