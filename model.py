@@ -8,7 +8,7 @@ from torchvision import models
 
 
 class ImgEncoder(torch.nn.Module):
-    def __init__(self, model_name: str, weights: str = "DEFAULT"):
+    def __init__(self, model_name: str, weights: str = "DEFAULT", dtype = torch.float32):
         super(ImgEncoder, self).__init__()
 
         self.model_name = model_name.lower()
@@ -34,6 +34,7 @@ class ImgEncoder(torch.nn.Module):
             raise ValueError('Invalid model name.')
 
         self.model.eval()
+        self.model.to(dtype=dtype)
 
     def forward(self, img):
         with torch.no_grad():
@@ -89,22 +90,23 @@ class EdgePredictor(torch.nn.Module):
 
 class Net(torch.nn.Module):
 
-    def __init__(self, backbone, layer_size):
+    def __init__(self, backbone, layer_size, dtype = torch.float32):
         super(Net, self).__init__()
-        self.fextractor = ImgEncoder(backbone)
+        self.fextractor = ImgEncoder(backbone, dtype = dtype)
         self.conv1 = GCNConv(2048, layer_size)  # TODO: dynamic n_features
         self.conv2 = GCNConv(layer_size, layer_size)
         self.predictor = EdgePredictor(layer_size, layer_size)
-
+        self.dtype = dtype
+        self.to(dtype=dtype)
     def forward(self, data):
         data.x = self.fextractor(data.detections)
 
         x, edge_index = data.x, data.edge_index
 
-        x = self.conv1(x, edge_index)
+        x = self.conv1(x=x, edge_index=edge_index)
         x = F.relu(x)
         x = F.dropout(x, training=self.training)
-        x = self.conv2(x, edge_index)
+        x = self.conv2(x=x, edge_index=edge_index)
 
         # Use edge_index to find the corresponding node features in x
         x_i, x_j = x[edge_index[0].to(torch.long)], x[edge_index[1].to(torch.long)]

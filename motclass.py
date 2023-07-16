@@ -381,7 +381,7 @@ class MotTrack:
             # Build `y` tensor to compare predictions with gt
             gt_adjacency_set = set([tuple(x) for x in gt_adjacency_list.tolist()])
 
-            y = torch.tensor([1 if tuple(x) in gt_adjacency_set else 0 for x in adjacency_list])
+            y = torch.tensor([1 if tuple(x) in gt_adjacency_set else 0 for x in adjacency_list]).to(self.dtype)
 
         else:
             logging.info(f"No ground truth adjacency list available")

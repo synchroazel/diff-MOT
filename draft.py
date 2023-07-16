@@ -1,35 +1,70 @@
-import os
+import torch
+from torch_geometric.transforms import ToDevice
+from tqdm import tqdm
 
-import networkx as nx
-import numpy as np
-from torch_geometric.utils import to_networkx
-import torch_geometric.data as pyg_data
-import pickle
-from motclass import *
-from utilities import get_best_device
+from model import Net
+from motclass import MotDataset, build_graph
+from utilities import get_best_device, save_graph
 
 device = get_best_device()
 
-# mot20_path = "/media/dmmp/vid+backup/Data/MOT20"
-# mot20_path = "/media/dmmp/vid+backup/Data/MOT17"
-mot20_path = "data/MOT17"
-# mot20 = MotDataset(mot20_path, 'train', linkage_window=LINKAGE_TYPES["ALL"], device=device, det_resize=(32, 32))
-# mot20 = MotDataset(mot20_path, 'train', subtrack_len=-1, device=device, linkage_window=24, dtype=torch.float16, name="MOT20")
-mot20 = MotDataset(mot20_path, 'train', subtrack_len=300, device=device, linkage_window=48, dtype=torch.float32, name="MOT17",
-                   detections_file_name='gt.txt', detections_file_folder='gt')
+mot20_path = "/media/dmmp/vid+backup/Data/MOT20"
 
-track = mot20[1]
 
-# graph = build_graph(**track.get_data(), device=device, dtype=torch.float16)
-graph = build_graph(**track.get_data(), device=device, dtype=torch.float32)
 
-save_path = os.path.normpath(os.path.join("saves",*(str(track).split('/'))[0:-1]))
-if not os.path.exists(save_path):
-    os.makedirs(save_path)
 
-file_name = os.path.normpath(os.path.join(save_path,str(track).split('/')[-1])) + ".pickle"
-with open(file_name, 'wb') as f:
-    pickle.dump(graph,f)
-print("Graph saved as: " + file_name)
-print(graph)
+def train(model, train_loader, loss_function, optimizer, epochs, device):
+    model = model.to(device)
+    model.train()
 
+    pbar = tqdm(range(epochs))
+
+    for epoch in pbar:
+
+        epoch_loss = 0
+        for i, data in enumerate(train_loader):
+
+            data = ToDevice(device.type)(data)
+            # data = data.to(device)
+
+            # Forward pass
+            pred_edges = model(data)  # Get the predicted edge labels
+            gt_edges = data.y  # Get the true edge labels
+
+            loss = loss_function(pred_edges, gt_edges)
+
+            print("Loss computed - " + str(loss.item()))
+
+            # Backward and optimize
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            torch.nn.utils.clip_grad_norm_(model.parameters(),5)
+
+            epoch_loss += loss.item()
+
+        print(f'Epoch {epoch + 1}, Loss: {epoch_loss / i}')
+
+
+# Hyperparameters
+backbone = 'resnet50'
+l_size = 128
+epochs = 10
+learning_rate = 0.001
+
+model = Net(backbone, l_size, dtype=torch.float32)
+
+loss_function = torch.nn.BCELoss()
+optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+
+mo20_train_dl = MotDataset(dataset_path=mot20_path,
+                           split='train',
+                           subtrack_len=50,
+                           linkage_window=12,
+                           detections_file_folder='gt',
+                           detections_file_name='gt.txt',
+                           device=device,
+                           dl_mode=True,
+                           dtype=torch.float32)
+
+train(model, mo20_train_dl, loss_function, optimizer, epochs, device)
