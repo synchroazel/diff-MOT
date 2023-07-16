@@ -48,12 +48,13 @@ def build_graph(adjacency_list: torch.Tensor,
 
     detections = detections.to(dtype)
     number_of_nodes = len(detections)
-    edge_attributes = torch.zeros(len(y), 2)
 
     # for distance calculation
     detections_coords = box_convert(torch.clone(detections_coords).detach(), "xyxy", "cxcywh")
 
-    # / 1000 is needed if we have 16bit floats, otherwise overflow will occur
+    # centers = torch.zeros((len(detections_coords),2), dtype=dtype, device=device)
+    # centers[:,(0,1)] = detections_coords[:,(0,1)] / 1000
+    # del detections_coords
     detections_coords = detections_coords[:, (0, 1)] / 1000
 
     """
@@ -104,22 +105,23 @@ def build_graph(adjacency_list: torch.Tensor,
 
     detections_dist = torch.cdist(detections_coords,
                                   detections_coords, p=2).to('cpu')
+
     # Create a 1D Tensor with the distances of the detections ordered as the edges in the adj list
     a = adjacency_list[:, 0].to('cpu').to(torch.int64)
     b = adjacency_list[:, 1].to('cpu').to(torch.int64)
-    edge_attributes[:, 0] = detections_dist[a, b]
-
-    detections_dist = torch.cdist(frame_times.to(dtype),
-                                  frame_times.to(dtype), p=2).to('cpu') / 1000
-
-    # Create a 1D Tensor with the distances of the detections ordered as the edges in the adj list
-    edge_attributes[:, 1] = detections_dist[a, b]
-
+    partial_edge_features = detections_dist[a, b]
+    # input("after indexing")
     del detections_dist
     del a
     del b
+    # input("detection dist deleted")
 
-    edge_attributes = 1 / (edge_attributes.to(device) * 1000 + 0.00001)
+    partial_edge_features = partial_edge_features.to(device) * 1000
+    # print(partial_edge_features)
+    ###
+    # GRAPH building
+    ###
+    # input("edges moved to gpu")
 
     # Prepare for pyg_data.Data
     adjacency_list = adjacency_list.t().contiguous()
@@ -132,7 +134,7 @@ def build_graph(adjacency_list: torch.Tensor,
         detections=detections,
         num_nodes=number_of_nodes,
         times=frame_times,
-        edge_attr=edge_attributes
+        edge_features=partial_edge_features
     )
 
 
@@ -151,7 +153,7 @@ class MotTrack:
                  name: str = "track"):
 
         # Set logging level
-        logging.getLogger().setLevel(logging_lv)
+        logging.basicConfig(level=logging_lv)
 
         self.detections = detections
         self.images_list = images_list
@@ -170,7 +172,7 @@ class MotTrack:
                             f"Setting `linkage window` to {self.n_frames}")
             self.linkage_window = self.n_frames
 
-        logging.info(f"{self.n_frames} frames")
+        logging.info(f"Track has {self.n_frames} frames")
 
     def __str__(self):
 
@@ -326,6 +328,7 @@ class MotTrack:
         # # Prepare the edge index tensor for pytorch geometric
         # adjacency_list = torch.tensor(adjacency_list).to(torch.int16).to(self.device)
 
+        logging.info(f"{self.n_frames} frames")
         logging.info(f"{len(flattened_node_features)} total nodes")
         logging.info(f"{len(adjacency_list)} total edges")
 
@@ -361,6 +364,8 @@ class MotTrack:
 
                 # all_paths wll be a list of lists, each list containing the detections ids of a gt trajectory
                 all_paths.append(cur_path)
+
+            logging.info(f"{len(all_paths)} gt trajectories found")
 
             # Fill gt_adjacency_list using the detections in all_paths
             for path in all_paths:
@@ -407,7 +412,6 @@ class MotDataset(Dataset):
                  det_resize: tuple = (70, 170),
                  linkage_window: int = -1,
                  subtrack_len: int = -1,
-                 slide: int = 1,
                  subtrack_number: int = -1,
                  dl_mode: bool = False,
                  device: torch.device = torch.device("cpu"),
@@ -419,7 +423,6 @@ class MotDataset(Dataset):
         self.images_directory = images_directory
         self.det_resize = det_resize
         self.linkage_window = linkage_window
-        self.slide = slide
         self.subtrack_len = subtrack_len
         self.subtrack_number = subtrack_number
         self.device = device
@@ -431,41 +434,6 @@ class MotDataset(Dataset):
             f"Split must be one of {os.listdir(self.dataset_dir)}."
 
         self.tracklist = os.listdir(os.path.join(self.dataset_dir, split))
-
-        if self.dl_mode:
-            logging.getLogger().setLevel(logging.WARNING)
-
-        self.tracklist = os.listdir(os.path.join(self.dataset_dir, split))
-
-        if self.dl_mode:
-            logging.getLogger().setLevel(logging.WARNING)
-
-        # precompute if slide or subtrack_len is provided
-        if self.slide > 1 or self.subtrack_len > 1:
-            self.precompute_subtracks()
-
-    def precompute_subtracks(self):
-        frames_per_track = []
-        for track in self.tracklist:
-            track_path = os.path.join(self.dataset_dir, self.split, track)
-            img_dir = os.path.normpath(os.path.join(track_path, self.images_directory))
-            images_list = sorted([os.path.join(img_dir, img) for img in os.listdir(img_dir)])
-            frames_per_track.append(len(images_list))
-
-        self.start_frames = []
-        self.tracks = []
-        for track, n_frames in enumerate(frames_per_track):
-            for start_frame in range(0, n_frames - self.subtrack_len + 1, self.slide):
-                self.start_frames.append(start_frame)
-                self.tracks.append(track)
-
-        if len(self.start_frames) == 0:
-            raise ValueError(f"No subtracks of len {self.subtrack_len} can be created with slide {self.slide}.")
-
-        self.n_subtracks = len(self.start_frames)
-        self.cur_track = self.tracks[0]
-        self.str_frame = self.start_frames[0]
-        self.end_frame = self.str_frame + self.subtrack_len
 
     @staticmethod
     def _read_detections(det_file) -> dict:
@@ -486,11 +454,9 @@ class MotDataset(Dataset):
         return detections
 
     def __getitem__(self, idx):
-        if idx >= self.n_subtracks:
-            raise IndexError(
-                f"At most {self.n_subtracks} subtracks of len {self.subtrack_len} can be created with slide {self.slide}.")
 
-        all_detections = []
+        frames_per_track, all_detections, all_images = list(), list(), list()
+
         for track in self.tracklist:
             track_path = os.path.join(self.dataset_dir, self.split, track)
             detections_file = os.path.normpath(
@@ -499,39 +465,68 @@ class MotDataset(Dataset):
             detections = [detections[frame] for frame in sorted(detections.keys())]
             all_detections += [detections]
 
-        all_images = []
+        all_images = list()
+
         for track in self.tracklist:
             track_path = os.path.join(self.dataset_dir, self.split, track)
             img_dir = os.path.normpath(os.path.join(track_path, self.images_directory))
             images_list = sorted([os.path.join(img_dir, img) for img in os.listdir(img_dir)])
+            frames_per_track.append(len(images_list))
             all_images += [images_list]
 
-        # Get the starting frame and track for this batch
-        starting_frame = self.start_frames[idx]
-        cur_track = self.tracks[idx]
-        ending_frame = starting_frame + self.subtrack_len
+        # IF NO subtrack_len is provided, RETURN THE WHOLE TRACK
 
-        logging.debug(f"From {starting_frame} to {ending_frame}")
+        if self.subtrack_len == -1:
+            return MotTrack(detections=all_detections[idx],
+                            images_list=all_images[idx],
+                            det_resize=self.det_resize,
+                            linkage_window=self.linkage_window,
+                            subtrack_len=self.subtrack_len,
+                            device=self.device,
+                            dtype=self.dtype,
+                            name=self.name + "/track_" + str(self.tracklist[idx]))
 
-        logging.debug(f"Starting in track: {cur_track}")
-        logging.debug(f"From {starting_frame} to {ending_frame} of track {cur_track}")
+        # IF subtrack_len is provided, RETURN THE #idx BATCH
 
-        frames_window_msg = f"frames {starting_frame}-{ending_frame}/{len(all_images[cur_track])}"
+        if self.subtrack_len > 0:
 
-        logging.info(
-            f"Subtrack #{idx} | track {self.tracklist[cur_track]} {frames_window_msg}\r")
+            # Precompute the start frames and tracks if they haven't been computed already
+            if not hasattr(self, 'start_frames') or not hasattr(self, 'tracks'):
+                self.start_frames = []
+                self.tracks = []
+                for track, n_frames in enumerate(frames_per_track):
+                    for start_frame in range(n_frames - self.subtrack_len + 1):
+                        self.start_frames.append(start_frame)
+                        self.tracks.append(track)
 
-        track = MotTrack(detections=all_detections[cur_track][starting_frame:ending_frame],
-                         images_list=all_images[cur_track][starting_frame:ending_frame],
-                         det_resize=self.det_resize,
-                         linkage_window=self.linkage_window,
-                         subtrack_len=self.subtrack_len,
-                         device=self.device,
-                         dtype=self.dtype,
-                         logging_lv=logging.WARNING if self.dl_mode else logging.INFO,
-                         name=self.name + "/track_" + str(self.tracklist[cur_track]) + "/subtrack_" + str(idx))
+            if idx >= len(self.start_frames):
+                raise IndexError(
+                    f"{len(self.start_frames)} subtracks can be created with subtrack_len={self.subtrack_len}, but batch #{idx} was requested. ")
 
-        if self.dl_mode:
-            return build_graph(**track.get_data(), device=self.device, dtype=self.dtype)
-        else:
-            return track
+            # Get the starting frame and track for this batch
+            starting_frame = self.start_frames[idx]
+            cur_track = self.tracks[idx]
+            ending_frame = starting_frame + self.subtrack_len
+
+            logging.debug(f"From {starting_frame} to {ending_frame}")
+
+            logging.debug(f"Starting in track: {cur_track}")
+            logging.debug(f"From {starting_frame} to {ending_frame} of track {cur_track}")
+
+            logging.info(
+                f"Batch #{idx} | track #{cur_track + 1} (frames {starting_frame}/{frames_per_track[cur_track]} - {ending_frame}/{frames_per_track[cur_track]})")
+
+            track = MotTrack(detections=all_detections[cur_track][starting_frame:ending_frame],
+                             images_list=all_images[cur_track][starting_frame:ending_frame],
+                             det_resize=self.det_resize,
+                             linkage_window=self.linkage_window,
+                             subtrack_len=self.subtrack_len,
+                             device=self.device,
+                             dtype=self.dtype,
+                             logging_lv=logging.WARNING if self.dl_mode else logging.INFO,
+                             name=self.name + "/track_" + str(self.tracklist[cur_track]) + "/subtrack_" + str(idx))
+
+            if self.dl_mode:
+                return build_graph(**track.get_data(), device=self.device, dtype=self.dtype)
+            else:
+                return track

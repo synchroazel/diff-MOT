@@ -1,6 +1,5 @@
 import torch
 import torch.nn.functional as F
-import torch_geometric.nn
 from efficientnet_pytorch import EfficientNet
 from torch import nn
 from torch_geometric.nn import MessagePassing
@@ -9,7 +8,7 @@ from torchvision import models
 
 
 class ImgEncoder(torch.nn.Module):
-    def __init__(self, model_name: str, weights: str = "DEFAULT", dtype=torch.float32):
+    def __init__(self, model_name: str, weights: str = "DEFAULT", dtype = torch.float32):
         super(ImgEncoder, self).__init__()
 
         self.model_name = model_name.lower()
@@ -44,6 +43,36 @@ class ImgEncoder(torch.nn.Module):
             return features
 
 
+class GCNConv(MessagePassing):
+    def __init__(self, in_channels, out_channels):
+        super(GCNConv, self).__init__(aggr='add')  # "Add" aggregation.
+        self.lin = torch.nn.Linear(in_channels, out_channels)
+
+    def forward(self, x, edge_index):
+        # x has shape [N, in_channels]
+        # edge_index has shape [2, E]
+
+        # Step 1: Add self-loops to the adjacency matrix.
+        edge_index, _ = add_self_loops(edge_index, num_nodes=x.size(0))
+
+        # Step 2: Linearly transform node feature matrix.
+        x = self.lin(x)
+
+        # Step 3: Compute normalization.
+        row, col = edge_index
+        deg = degree(col, x.size(0), dtype=x.dtype)
+        deg_inv_sqrt = deg.pow(-0.5)
+        norm = deg_inv_sqrt[row] * deg_inv_sqrt[col]
+
+        # Step 4-6: Start propagating messages.
+        return self.propagate(edge_index, size=(x.size(0), x.size(0)), x=x, norm=norm)
+
+    def message(self, x_j, norm):
+        # x_j has shape [E, out_channels]
+        # Step 5: Normalize node features.
+        return norm.view(-1, 1) * x_j
+
+
 class EdgePredictor(torch.nn.Module):
     def __init__(self, in_channels, hidden_channels):
         super(EdgePredictor, self).__init__()
@@ -60,58 +89,26 @@ class EdgePredictor(torch.nn.Module):
 
 
 class Net(torch.nn.Module):
-    # We should use only layers that support edge features
-    layer_aliases = {
-        'GATConv': torch_geometric.nn.GATConv,  # https://arxiv.org/abs/1710.10903
-        'GATv2Conv': torch_geometric.nn.GATv2Conv,  # https://arxiv.org/abs/2105.14491
-        'TransformerConv': torch_geometric.nn.TransformerConv,  # https://arxiv.org/abs/2009.03509
-        'GMMConv': torch_geometric.nn.GMMConv,  # https://arxiv.org/abs/1611.08402
-        # 'SplineConv': torch_geometric.nn.SplineConv,  # https://arxiv.org/abs/1711.08920
-        # 'NNConv': torch_geometric.nn.NNConv, # https://arxiv.org/abs/1704.01212
-        'CGConv': torch_geometric.nn.CGConv,  # https://journals.aps.org/prl/abstract/10.1103/PhysRevLett.120.145301
-        'PNAConv': torch_geometric.nn.PNAConv,  # https://arxiv.org/abs/2004.05718
-        'GENConv': torch_geometric.nn.GENConv,  # https://arxiv.org/abs/2006.07739
-        'GeneralConv': torch_geometric.nn.GeneralConv,  # https://arxiv.org/abs/2011.08843
-    }
 
-    def __init__(self, backbone, layer_size, layer_tipe='GATConv', dtype=torch.float32, mps_fallback=False, **kwargs):
+    def __init__(self, backbone, layer_size, dtype = torch.float32):
         super(Net, self).__init__()
-        self.fextractor = ImgEncoder(backbone, dtype=dtype)
-        self.conv1 = self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size, **kwargs)
-        self.conv2 = self.layer_aliases[layer_tipe](layer_size, layer_size, **kwargs)
+        self.fextractor = ImgEncoder(backbone, dtype = dtype)
+        self.conv1 = GCNConv(2048, layer_size)  # TODO: dynamic n_features
+        self.conv2 = GCNConv(layer_size, layer_size)
         self.predictor = EdgePredictor(layer_size, layer_size)
         self.dtype = dtype
-        self.device = next(self.parameters()).device  # get the device the model is currently on
-        self.mps_fallback = mps_fallback
         self.to(dtype=dtype)
-
-        # Fallback to CPU if device is MPS
-        if self.mps_fallback:
-            print('[INFO] Falling back to CPU for conv layers.')
-
     def forward(self, data):
         data.x = self.fextractor(data.detections)
 
-        x, edge_index, edge_attr = data.x, data.edge_index.to(torch.int64), data.edge_attr
+        x, edge_index = data.x, data.edge_index
 
-        # Fallback to CPU if device is MPS
-        if self.mps_fallback:
-            x = x.to(torch.device('cpu'))
-            edge_index = edge_index.to(torch.device('cpu'))
-            edge_attr = edge_attr.to(torch.device('cpu'))
-            self.conv1.to('cpu')
-            self.conv2.to('cpu')
-
-        x = self.conv1(x=x, edge_index=edge_index, edge_attr=edge_attr)
-        x = F.relu(x)  # some layers already have activation, but not all of them
-        x = F.dropout(x, training=self.training, p=0.2)  # not all layers have incorporated dropout, so we put it here
+        x = self.conv1(x=x, edge_index=edge_index)
+        x = F.relu(x)
+        x = F.dropout(x, training=self.training)
         x = self.conv2(x=x, edge_index=edge_index)
 
-        # Back on MPS after the convolutions
-        if self.mps_fallback:
-            x = x.to(torch.device('mps'))
-
         # Use edge_index to find the corresponding node features in x
-        x_i, x_j = x[edge_index[0].to(torch.int64)], x[edge_index[1].to(torch.int64)]
+        x_i, x_j = x[edge_index[0].to(torch.long)], x[edge_index[1].to(torch.long)]
 
         return self.predictor(x_i, x_j)
