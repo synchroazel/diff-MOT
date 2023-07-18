@@ -77,6 +77,9 @@ class Net(torch.nn.Module):
     def __init__(self, backbone, layer_size, layer_tipe='GATConv', dtype=torch.float32, mps_fallback=False, **kwargs):
         super(Net, self).__init__()
         self.fextractor = ImgEncoder(backbone, dtype=dtype)
+        self.layer_type = layer_tipe
+        self.layer_size = layer_size
+        self.backbone = backbone
         self.conv1 = self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size, **kwargs)
         self.conv2 = self.layer_aliases[layer_tipe](layer_size, layer_size, **kwargs)
         self.predictor = EdgePredictor(layer_size, layer_size)
@@ -117,3 +120,6 @@ class Net(torch.nn.Module):
         x_i, x_j = x[edge_index[0].to(torch.int64)], x[edge_index[1].to(torch.int64)]
 
         return self.predictor(x_i, x_j)
+
+    def __str__(self):
+        return self.layer_type.lower() + "_" + str(self.layer_size) + "_" + self.backbone + "-backbone"
