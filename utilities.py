@@ -1,6 +1,6 @@
+import logging
 import os
 import pickle
-import sys
 
 import networkx as nx
 import numpy as np
@@ -104,10 +104,22 @@ def load_graph(pickle_path):
     return graph
 
 
-def sl_message(msg):
-    """ Print a message which stays on the same line if possible """
-    print('\033[K', end='')
-    print(msg, end='')
-    sys.stdout.flush()
-    print('\033[F', end='')
-    sys.stdout.flush()
+def save_model(model, savepath="saves/models", mode="pkl", mps_fallback=False):
+
+    if mps_fallback:
+        model.to(torch.device('cpu'))
+
+    match (mode):
+
+        case "pkl":
+            model_savepath = os.path.normpath(os.path.join(savepath, str(model) + ".pkl"))
+            pickle.dump(model, open(model_savepath, "wb"))
+
+        case "weights":
+            pass  # TODO implement
+
+        case _:
+            logging.error("Saving mode not implemented.")
+
+    if mps_fallback:
+        model.to(torch.device('mps'))

@@ -6,7 +6,7 @@ from tqdm import tqdm
 
 from model import Net
 from motclass import MotDataset
-from utilities import get_best_device
+from utilities import get_best_device, save_model
 
 device = get_best_device()
 
@@ -25,7 +25,7 @@ def validate(model, val_loader, idx, loss_function, device):
         return loss.item()
 
 
-def train(model, train_loader, loss_function, optimizer, epochs, device):
+def train(model, train_loader, loss_function, optimizer, epochs, device, mps_fallback=False):
     model = model.to(device)
     model.train()
 
@@ -39,6 +39,8 @@ def train(model, train_loader, loss_function, optimizer, epochs, device):
 
         pbar_dl = tqdm(enumerate(train_loader), desc='[TQDM] Training on track 1/? ', total=train_loader.n_subtracks)
 
+        last_track_idx = -1
+
         for i, data in pbar_dl:
             data = ToDevice(device.type)(data)
 
@@ -47,6 +49,10 @@ def train(model, train_loader, loss_function, optimizer, epochs, device):
 
             pbar_dl.set_description(
                 f'[TQDM] Training on track {cur_track_idx}/{len(train_loader.tracklist)} ({cur_track_name})')
+
+            # On track switch, save the model
+            if cur_track_idx != last_track_idx:
+                save_model(model, mps_fallback=mps_fallback)
 
             """ Training step """
 
@@ -79,6 +85,8 @@ def train(model, train_loader, loss_function, optimizer, epochs, device):
             pbar_ep.set_description(
                 f'[TQDM] Epoch #{epoch + 1} - {avg_train_loss_msg} - {avg_val_loss_msg}')
 
+            last_track_idx = cur_track_idx
+
         pbar_ep.set_description(f'[TQDM] Epoch #{epoch + 1} - avg.Loss: {(total_train_loss / (i + 1)):.4f}')
 
 
@@ -94,6 +102,7 @@ linkage_window = -1
 l_size = 128
 epochs = 1
 learning_rate = 0.001
+mps_fallback = True
 
 model = Net(backbone=backbone,
             layer_tipe=layer_type,
@@ -117,4 +126,4 @@ mot_train_dl = MotDataset(dataset_path=dataset_path,
                           device=device,
                           dtype=dtype)
 
-train(model, mot_train_dl, loss_function, optimizer, epochs, device)
+train(model, mot_train_dl, loss_function, optimizer, epochs, device, mps_fallback=True)

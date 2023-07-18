@@ -520,6 +520,10 @@ class MotDataset(Dataset):
         logging.info(
             f"Subtrack #{idx} | track {self.tracklist[cur_track]} {frames_window_msg}\r")
 
+        self.cur_track = cur_track
+        self.str_frame = starting_frame
+        self.end_frame = ending_frame
+
         track = MotTrack(detections=all_detections[cur_track][starting_frame:ending_frame],
                          images_list=all_images[cur_track][starting_frame:ending_frame],
                          det_resize=self.det_resize,
