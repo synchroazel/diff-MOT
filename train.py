@@ -1,4 +1,4 @@
-import sys
+import os
 
 import torch
 from torch_geometric.transforms import ToDevice
@@ -46,7 +46,7 @@ def train(model, train_loader, loss_function, optimizer, epochs, device):
             cur_track_name = train_loader.tracklist[train_loader.cur_track]
 
             pbar_dl.set_description(
-                f'[INFO] Training on track {cur_track_idx}/{len(train_loader.tracklist)} ({cur_track_name})')
+                f'[TQDM] Training on track {cur_track_idx}/{len(train_loader.tracklist)} ({cur_track_name})')
 
             """ Training step """
 
@@ -82,17 +82,17 @@ def train(model, train_loader, loss_function, optimizer, epochs, device):
         pbar_ep.set_description(f'[TQDM] Epoch #{epoch + 1} - avg.Loss: {(total_train_loss / (i + 1)):.4f}')
 
 
-mot20_path = "data/MOT20"
-
 # Hyperparameters
+mot_path = "data"
+mot = 'MOT17'
 dtype = torch.float32
 backbone = 'resnet50'
 layer_type = 'GATConv'
 subtrack_len = 15
-slide = 5
-linkage_window = subtrack_len//3
+slide = 15
+linkage_window = -1
 l_size = 128
-epochs = 10
+epochs = 1
 learning_rate = 0.001
 
 model = Net(backbone=backbone,
@@ -104,15 +104,17 @@ model = Net(backbone=backbone,
 loss_function = torch.nn.BCELoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, eps=1e-4)
 
-mo20_train_dl = MotDataset(dataset_path=mot20_path,
-                           split='train',
-                           subtrack_len=subtrack_len,
-                           slide=slide,
-                           linkage_window=5,
-                           detections_file_folder='gt',
-                           detections_file_name='gt.txt',
-                           device=device,
-                           dl_mode=True,
-                           dtype=dtype)
+dataset_path = os.path.normpath(os.path.join(mot_path, mot))
 
-train(model, mo20_train_dl, loss_function, optimizer, epochs, device)
+mot_train_dl = MotDataset(dataset_path=dataset_path,
+                          split='train',
+                          subtrack_len=15,
+                          slide=15,
+                          linkage_window=5,
+                          detections_file_folder='gt',
+                          detections_file_name='gt.txt',
+                          dl_mode=True,
+                          device=device,
+                          dtype=dtype)
+
+train(model, mot_train_dl, loss_function, optimizer, epochs, device)
