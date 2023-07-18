@@ -11,7 +11,9 @@ from utilities import get_best_device, save_model
 device = get_best_device()
 
 
-def validate(model, val_loader, idx, loss_function, device):
+# %% Function definitions
+
+def single_validate(model, val_loader, idx, loss_function, device):
     """ Validate the model on a single subtrack, given a MOT dl and an index"""
     model.eval()
 
@@ -74,12 +76,12 @@ def train(model, train_loader, loss_function, optimizer, epochs, device, mps_fal
             """ Validation step """
 
             val_loader = train_loader
-            val_loss = validate(model, val_loader, i + 1, loss_function, device)
+            val_loss = single_validate(model, val_loader, i + 1, loss_function, device)
             total_val_loss += val_loss
 
             """ Update progress """
 
-            avg_train_loss_msg = f'avg.Tr.Loss: {(total_train_loss / (i + 1)):.4f} (last: {train_loss.item():.4f})'
+            avg_train_loss_msg = f'avg.Tr.Loss: {(total_train_loss / (i + 1)):.4f} (last: {train_loss:.4f})'
             avg_val_loss_msg = f'avg.Val.Loss: {(total_val_loss / (i + 1)):.4f} (last: {val_loss:.4f})'
 
             pbar_ep.set_description(
@@ -90,10 +92,18 @@ def train(model, train_loader, loss_function, optimizer, epochs, device, mps_fal
         pbar_ep.set_description(f'[TQDM] Epoch #{epoch + 1} - avg.Loss: {(total_train_loss / (i + 1)):.4f}')
 
 
-# Hyperparameters
-mot_path = '/media/dmmp/vid+backup/Data'
+# %% Set up parameters
+
+# Paths
+mot_path = 'data'
+
+# MOT to use
 mot = 'MOT17'
+
+# Dtype to use
 dtype = torch.float32
+
+# Hyperparameters
 backbone = 'resnet50'
 layer_type = 'GATConv'
 subtrack_len = 15
@@ -102,7 +112,11 @@ linkage_window = 5
 l_size = 128
 epochs = 1
 learning_rate = 0.001
-mps_fallback = False
+
+# Only if using MPS
+mps_fallback = True
+
+# %% Initialize the model
 
 model = Net(backbone=backbone,
             layer_tipe=layer_type,
@@ -112,6 +126,8 @@ model = Net(backbone=backbone,
 
 loss_function = torch.nn.BCELoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, eps=1e-4)
+
+# %% Set up the dataloader
 
 dataset_path = os.path.normpath(os.path.join(mot_path, mot))
 
@@ -125,5 +141,7 @@ mot_train_dl = MotDataset(dataset_path=dataset_path,
                           dl_mode=True,
                           device=device,
                           dtype=dtype)
+
+# %% Train the model
 
 train(model, mot_train_dl, loss_function, optimizer, epochs, device, mps_fallback=mps_fallback)

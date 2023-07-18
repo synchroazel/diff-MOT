@@ -1,3 +1,4 @@
+import io
 import logging
 import os
 import pickle
@@ -104,18 +105,27 @@ def load_graph(pickle_path):
     return graph
 
 
-def save_model(model, savepath="saves/models", mode="pkl", mps_fallback=False):
-    if not os.path.exists(savepath):
-        os.makedirs(savepath)
-
+def save_model(model: torch.nn.Module,
+               adds: dict = None,
+               savepath: str = "saves/models",
+               mode: str = "pkl",
+               mps_fallback: bool = False):
     if mps_fallback:
         model.to(torch.device('cpu'))
 
-    match (mode):
+    match mode:
 
         case "pkl":
-            model_savepath = os.path.normpath(os.path.join(savepath, str(model) + ".pkl"))
-            pickle.dump(model, open(model_savepath, "wb"))
+
+            pkl_savepath = os.path.normpath(os.path.join(savepath, str(model)))
+
+            if adds:
+                for key in adds:
+                    pkl_savepath += "_" + str(key) + "_" + str(adds[key])
+
+            pkl_savepath += ".pkl"
+
+            pickle.dump(model, open(pkl_savepath, "wb"))
 
         case "weights":
             pass  # TODO implement
@@ -125,3 +135,17 @@ def save_model(model, savepath="saves/models", mode="pkl", mps_fallback=False):
 
     if mps_fallback:
         model.to(torch.device('mps'))
+
+
+def load_model_pkl(pkl_path):
+    class CustomUnpickler(pickle.Unpickler):
+        def find_class(self, module, name):
+            if module == 'torch.storage' and name == '_load_from_bytes':
+                return lambda b: torch.load(io.BytesIO(b), map_location='cpu')
+            else:
+                return super().find_class(module, name)
+
+    with open(pkl_path, 'rb') as file:
+        unpickler = CustomUnpickler(file)
+        obj = unpickler.load()
+    return obj
