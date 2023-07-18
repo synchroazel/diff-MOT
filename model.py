@@ -92,7 +92,9 @@ class Net(torch.nn.Module):
     def forward(self, data):
         data.x = self.fextractor(data.detections)
 
-        x, edge_index, edge_attr = data.x, data.edge_index.to(torch.int64), data.edge_attr
+        x, edge_index, edge_attr = data.x, data.edge_index, data.edge_attr
+
+        del data
 
         # Fallback to CPU if device is MPS
         if self.mps_fallback:
@@ -102,7 +104,7 @@ class Net(torch.nn.Module):
             self.conv1.to('cpu')
             self.conv2.to('cpu')
 
-        x = self.conv1(x=x, edge_index=edge_index, edge_attr=edge_attr)
+        x = self.conv1(x=x, edge_index=edge_index.to(torch.int64), edge_attr=edge_attr)
         x = F.relu(x)  # some layers already have activation, but not all of them
         x = F.dropout(x, training=self.training, p=0.2)  # not all layers have incorporated dropout, so we put it here
         x = self.conv2(x=x, edge_index=edge_index)

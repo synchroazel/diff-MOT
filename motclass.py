@@ -172,20 +172,20 @@ class MotTrack:
 
         logging.info(f"{self.n_frames} frames")
 
-    def __str__(self):
-
-        name = self.name
-
-        if self.linkage_window == -1 and self.subtrack_len == -1:
-            name += "/" + self.name.split("/")[-1]
-
-        if self.linkage_window > 0:
-            name += "/window_" + str(self.linkage_window)
-
-        if self.subtrack_len > 0:
-            name += "_len_" + str(self.subtrack_len)
-
-        return name
+    # def __str__(self):
+    #
+    #     name = self.name
+    #
+    #     if self.linkage_window == -1 and self.subtrack_len == -1:
+    #         name += "/" + self.name.split("/")[-1]
+    #
+    #     if self.linkage_window > 0:
+    #         name += "/window_" + str(self.linkage_window)
+    #
+    #     if self.subtrack_len > 0:
+    #         name += "_len_" + str(self.subtrack_len)
+    #
+    #     return name
 
     def get_data(self):
         """
@@ -408,7 +408,6 @@ class MotDataset(Dataset):
                  linkage_window: int = -1,
                  subtrack_len: int = -1,
                  slide: int = 1,
-                 subtrack_number: int = -1,
                  dl_mode: bool = False,
                  device: torch.device = torch.device("cpu"),
                  dtype=torch.float32):
@@ -421,7 +420,6 @@ class MotDataset(Dataset):
         self.linkage_window = linkage_window
         self.slide = slide
         self.subtrack_len = subtrack_len
-        self.subtrack_number = subtrack_number
         self.device = device
         self.dl_mode = dl_mode
         self.dtype = dtype
@@ -462,6 +460,7 @@ class MotDataset(Dataset):
         if len(self.start_frames) == 0:
             raise ValueError(f"No subtracks of len {self.subtrack_len} can be created with slide {self.slide}.")
 
+        self.frames_per_track = frames_per_track
         self.n_subtracks = len(self.start_frames)
         self.cur_track = self.tracks[0]
         self.str_frame = self.start_frames[0]
