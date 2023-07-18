@@ -39,7 +39,7 @@ def train(model, train_loader, loss_function, optimizer, epochs, device, mps_fal
 
         pbar_dl = tqdm(enumerate(train_loader), desc='[TQDM] Training on track 1/? ', total=train_loader.n_subtracks)
 
-        last_track_idx = -1
+        last_track_idx = 0
 
         for i, data in pbar_dl:
             data = ToDevice(device.type)(data)
@@ -91,18 +91,18 @@ def train(model, train_loader, loss_function, optimizer, epochs, device, mps_fal
 
 
 # Hyperparameters
-mot_path = "data"
+mot_path = '/media/dmmp/vid+backup/Data'
 mot = 'MOT17'
 dtype = torch.float32
 backbone = 'resnet50'
 layer_type = 'GATConv'
 subtrack_len = 15
 slide = 15
-linkage_window = -1
+linkage_window = 5
 l_size = 128
 epochs = 1
 learning_rate = 0.001
-mps_fallback = True
+mps_fallback = False
 
 model = Net(backbone=backbone,
             layer_tipe=layer_type,
@@ -117,13 +117,13 @@ dataset_path = os.path.normpath(os.path.join(mot_path, mot))
 
 mot_train_dl = MotDataset(dataset_path=dataset_path,
                           split='train',
-                          subtrack_len=15,
-                          slide=15,
-                          linkage_window=5,
+                          subtrack_len=subtrack_len,
+                          slide=slide,
+                          linkage_window=linkage_window,
                           detections_file_folder='gt',
                           detections_file_name='gt.txt',
                           dl_mode=True,
                           device=device,
                           dtype=dtype)
 
-train(model, mot_train_dl, loss_function, optimizer, epochs, device, mps_fallback=True)
+train(model, mot_train_dl, loss_function, optimizer, epochs, device, mps_fallback=mps_fallback)

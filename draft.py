@@ -8,7 +8,7 @@ from utilities import get_best_device, save_graph
 
 device = get_best_device()
 
-mot20_path = "/media/dmmp/vid+backup/Data/MOT20"
+mot20_path = "/media/dmmp/vid+backup/Data/MOT17"
 
 
 
@@ -49,7 +49,7 @@ def train(model, train_loader, loss_function, optimizer, epochs, device):
 # Hyperparameters
 backbone = 'resnet50'
 l_size = 128
-epochs = 10
+epochs = 1
 learning_rate = 0.001
 
 model = Net(backbone, l_size, dtype=torch.float32)
@@ -59,12 +59,13 @@ optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
 mo20_train_dl = MotDataset(dataset_path=mot20_path,
                            split='train',
-                           subtrack_len=50,
-                           linkage_window=12,
+                           subtrack_len=10,
+                           linkage_window=-1,
                            detections_file_folder='gt',
                            detections_file_name='gt.txt',
                            device=device,
                            dl_mode=True,
-                           dtype=torch.float32)
+                           dtype=torch.float32,
+                           )
 
 train(model, mo20_train_dl, loss_function, optimizer, epochs, device)

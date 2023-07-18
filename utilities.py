@@ -105,6 +105,8 @@ def load_graph(pickle_path):
 
 
 def save_model(model, savepath="saves/models", mode="pkl", mps_fallback=False):
+    if not os.path.exists(savepath):
+        os.makedirs(savepath)
 
     if mps_fallback:
         model.to(torch.device('cpu'))
