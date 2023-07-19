@@ -125,6 +125,14 @@ def build_graph(adjacency_list: torch.Tensor,
     adjacency_list = adjacency_list.t().contiguous()
     gt_adjacency_list = gt_adjacency_list.t().contiguous() if gt_adjacency_list is not None else None
 
+    # Naive pruning           distance of 20 pixel
+    pruned_mask = [False if x[0] < 0.05 else True for x in edge_attributes]
+    adjacency_list = adjacency_list[:, pruned_mask]
+    edge_attributes = edge_attributes[pruned_mask, :]
+    y = y[pruned_mask]
+#
+    # todo: graph pruning
+
     return pyg_data.Data(
         edge_index=adjacency_list,
         gt_edge_index=gt_adjacency_list,
@@ -145,10 +153,12 @@ class MotTrack:
                  det_resize: tuple,
                  linkage_window: int,
                  subtrack_len: int,
+
                  device: torch.device,
                  dtype: torch.dtype = torch.float32,
                  logging_lv: int = logging.INFO,
-                 name: str = "track"):
+                 name: str = "track",
+                 black_and_white_features=False):
 
         # Set logging level
         logging.getLogger().setLevel(logging_lv)
@@ -164,6 +174,7 @@ class MotTrack:
         self.n_nodes = []
         self.dtype = dtype
         self.logging_lv = logging_lv
+        self.black_and_white_features=black_and_white_features
 
         if self.linkage_window > self.n_frames:
             logging.warning(f"`linkage window` was set to {self.linkage_window} but track has {self.n_frames} frames."
@@ -209,12 +220,15 @@ class MotTrack:
 
         i = 0  # frame counter
         j = 0
+        channels = 3
+        if self.black_and_white_features:
+            channels = 1
 
         number_of_detections = sum([len(x) for x in self.detections])
 
         track_detections_coords = torch.zeros((number_of_detections, 4), dtype=self.dtype).to(self.device)
         frame_times = torch.zeros((number_of_detections, 1), dtype=torch.int16).to(self.device)
-        flattened_node_features = torch.zeros((number_of_detections, 3, self.det_resize[1], self.det_resize[0]),
+        flattened_node_features = torch.zeros((number_of_detections, channels, self.det_resize[1], self.det_resize[0]),
                                               dtype=self.dtype).to(self.device)
 
         # Process all frames images
@@ -225,6 +239,8 @@ class MotTrack:
                 pbar.set_description(f"[TQDM] Reading frame {image}")
 
             image = Image.open(os.path.normpath(image))  # all image detections in the current frame
+            if self.black_and_white_features:
+                image = image.convert('L')
 
             for detection in self.detections[i]:
                 nodes += 1
@@ -375,8 +391,22 @@ class MotTrack:
 
             # Build `y` tensor to compare predictions with gt
             gt_adjacency_set = set([tuple(x) for x in gt_adjacency_list.tolist()])
+            # for debug purposes
+            # gt_adjacency_set = list()
+            # for x in gt_adjacency_list.tolist():
+            #     gt_adjacency_set.append(tuple(x))
+            # gt_adjacency_set = set(gt_adjacency_set)
 
-            y = torch.tensor([1 if tuple(x) in gt_adjacency_set else 0 for x in adjacency_list]).to(self.dtype)
+
+            y = torch.tensor([1 if tuple(x) in gt_adjacency_set else 0 for x in adjacency_list.tolist()]).to(self.dtype)
+            # for debug purposes
+            # y = list()
+            # for x in adjacency_list.tolist():
+            #     if tuple(x) in gt_adjacency_set:
+            #         y.append(1)
+            #     else:
+            #         y.append(0)
+            # y = torch.tensor(y).to(self.device)
 
         else:
             logging.info(f"No ground truth adjacency list available")
@@ -409,6 +439,7 @@ class MotDataset(Dataset):
                  subtrack_len: int = -1,
                  slide: int = 1,
                  dl_mode: bool = False,
+                 black_and_white_features=False,
                  device: torch.device = torch.device("cpu"),
                  dtype=torch.float32):
         self.dataset_dir = dataset_path
@@ -420,6 +451,7 @@ class MotDataset(Dataset):
         self.linkage_window = linkage_window
         self.slide = slide
         self.subtrack_len = subtrack_len
+        self.black_and_white_features = black_and_white_features
         self.device = device
         self.dl_mode = dl_mode
         self.dtype = dtype
@@ -529,6 +561,7 @@ class MotDataset(Dataset):
                          det_resize=self.det_resize,
                          linkage_window=self.linkage_window,
                          subtrack_len=self.subtrack_len,
+                         black_and_white_features=self.black_and_white_features,
                          device=self.device,
                          dtype=self.dtype,
                          logging_lv=logging.WARNING if self.dl_mode else logging.INFO,

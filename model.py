@@ -55,7 +55,8 @@ class EdgePredictor(torch.nn.Module):
         x = torch.cat([x_i, x_j], dim=-1)  # Concatenate node features.
         x = F.relu(self.lin1(x))
         x = F.dropout(x, training=self.training)
-        x = torch.sigmoid(self.lin2(x)).squeeze()
+        x = self.lin2(x)
+        x = torch.sigmoid(x).squeeze()
         return x
 
 
@@ -65,11 +66,11 @@ class Net(torch.nn.Module):
         'GATConv': torch_geometric.nn.GATConv,  # https://arxiv.org/abs/1710.10903
         'GATv2Conv': torch_geometric.nn.GATv2Conv,  # https://arxiv.org/abs/2105.14491
         'TransformerConv': torch_geometric.nn.TransformerConv,  # https://arxiv.org/abs/2009.03509
-        'GMMConv': torch_geometric.nn.GMMConv,  # https://arxiv.org/abs/1611.08402
+        # 'GMMConv': torch_geometric.nn.GMMConv,  # https://arxiv.org/abs/1611.08402
         # 'SplineConv': torch_geometric.nn.SplineConv,  # https://arxiv.org/abs/1711.08920
         # 'NNConv': torch_geometric.nn.NNConv, # https://arxiv.org/abs/1704.01212
-        'CGConv': torch_geometric.nn.CGConv,  # https://journals.aps.org/prl/abstract/10.1103/PhysRevLett.120.145301
-        'PNAConv': torch_geometric.nn.PNAConv,  # https://arxiv.org/abs/2004.05718
+        # 'CGConv': torch_geometric.nn.CGConv,  # https://journals.aps.org/prl/abstract/10.1103/PhysRevLett.120.145301
+        # 'PNAConv': torch_geometric.nn.PNAConv,  # https://arxiv.org/abs/2004.05718
         'GENConv': torch_geometric.nn.GENConv,  # https://arxiv.org/abs/2006.07739
         'GeneralConv': torch_geometric.nn.GeneralConv,  # https://arxiv.org/abs/2011.08843
     }
@@ -81,7 +82,7 @@ class Net(torch.nn.Module):
         self.layer_size = layer_size
         self.backbone = backbone
         self.conv1 = self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size, **kwargs)
-        self.conv2 = self.layer_aliases[layer_tipe](layer_size, layer_size, **kwargs)
+        self.conv2 = self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size, **kwargs)
         self.predictor = EdgePredictor(layer_size, layer_size)
         self.dtype = dtype
         self.device = next(self.parameters()).device  # get the device the model is currently on
@@ -107,10 +108,12 @@ class Net(torch.nn.Module):
             self.conv1.to('cpu')
             self.conv2.to('cpu')
 
+
+
         x = self.conv1(x=x, edge_index=edge_index.to(torch.int64), edge_attr=edge_attr)
-        x = F.relu(x)  # some layers already have activation, but not all of them
-        x = F.dropout(x, training=self.training, p=0.2)  # not all layers have incorporated dropout, so we put it here
-        x = self.conv2(x=x, edge_index=edge_index)
+        # x = F.relu(x)  # some layers already have activation, but not all of them
+        # x = F.dropout(x, training=self.training, p=0.2)  # not all layers have incorporated dropout, so we put it here
+        x = self.conv2(x=x, edge_index=edge_index.to(torch.int64), edge_attr=edge_attr)
 
         # Back on MPS after the convolutions
         if self.mps_fallback:

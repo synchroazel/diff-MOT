@@ -95,7 +95,8 @@ def train(model, train_loader, loss_function, optimizer, epochs, device, mps_fal
 # %% Set up parameters
 
 # Paths
-mot_path = 'data'
+# mot_path = 'data'
+mot_path = '/media/dmmp/vid+backup/Data'
 
 # MOT to use
 mot = 'MOT17'
@@ -105,16 +106,16 @@ dtype = torch.float32
 
 # Hyperparameters
 backbone = 'resnet50'
-layer_type = 'GATConv'
-subtrack_len = 15
-slide = 15
-linkage_window = 5
-l_size = 128
+layer_type = 'GATv2Conv'
+subtrack_len = 10
+slide = 2
+linkage_window = 2
+l_size = 256
 epochs = 1
 learning_rate = 0.001
 
 # Only if using MPS
-mps_fallback = True
+mps_fallback = False
 
 # %% Initialize the model
 
@@ -122,10 +123,16 @@ model = Net(backbone=backbone,
             layer_tipe=layer_type,
             layer_size=l_size,
             dtype=dtype,
-            mps_fallback=True if device == torch.device('mps') else False)
+            mps_fallback=True if device == torch.device('mps') else False,
+            edge_dim=2,
+            heads=3,
+            concat=False,
+            dropout=0.2,
+            add_self_loops=False
+            )
 
-loss_function = torch.nn.BCELoss()
-optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, eps=1e-4)
+loss_function = torch.nn.BCEWithLogitsLoss()
+optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
 
 # %% Set up the dataloader
 
@@ -140,7 +147,8 @@ mot_train_dl = MotDataset(dataset_path=dataset_path,
                           detections_file_name='gt.txt',
                           dl_mode=True,
                           device=device,
-                          dtype=dtype)
+                          dtype=dtype,
+                          black_and_white_features=False)
 
 # %% Train the model
 

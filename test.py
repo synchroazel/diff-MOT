@@ -13,7 +13,13 @@ device = get_best_device()
 # %% Function definitions
 
 
-def test(model, val_loader, loss_function, device):
+def test(model, val_loader, loss_function, output_file_folder="outcomes",device="cuda"):
+
+    def trajectories_to_csv():
+        pass
+
+    outcomes = dict()
+
     model = model.to(device)
     model.eval()
 
@@ -34,7 +40,8 @@ def test(model, val_loader, loss_function, device):
             gt_edges = data.y  # Get the true edge labels
 
             val_loss = loss_function(pred_edges, gt_edges)
-            val_loss = val_loss
+            total_val_loss += val_loss
+
 
         avg_val_loss_msg = f'avg.Loss: {(total_val_loss / (i + 1)):.4f} (last: {val_loss:.4f})'
 
@@ -45,7 +52,8 @@ def test(model, val_loader, loss_function, device):
 # %% Set up parameters
 
 # Paths
-mot_path = 'data'
+# mot_path = 'data'
+mot_path = '/media/dmmp/vid+backup/Data'
 saves_path = 'saves/models'
 
 # Model to load
@@ -62,13 +70,13 @@ backbone = 'resnet50'
 layer_type = 'GATConv'
 subtrack_len = 15
 slide = 15
-linkage_window = 5
+linkage_window = -1
 l_size = 128
 epochs = 1
 learning_rate = 0.001
 
 # Only if using MPS
-mps_fallback = True
+mps_fallback = False
 
 # %% Load the model
 
@@ -98,4 +106,4 @@ mot_train_dl = MotDataset(dataset_path=dataset_path,
 
 # %% Test the model
 
-test(model, mot_train_dl, loss_function, device)
+test(model=model, val_loader=mot_train_dl, loss_function=loss_function, device=device)
