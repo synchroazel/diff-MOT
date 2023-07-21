@@ -55,8 +55,8 @@ class EdgePredictor(torch.nn.Module):
         x = torch.cat([x_i, x_j], dim=-1)  # Concatenate node features.
         x = F.relu(self.lin1(x))
         x = F.dropout(x, training=self.training)
-        x = self.lin2(x)
-        x = torch.sigmoid(x).squeeze()
+        x = self.lin2(x).squeeze()
+        # x = torch.sigmoid(x).squeeze()
         return x
 
 
@@ -109,7 +109,7 @@ class Net(torch.nn.Module):
             self.conv2.to('cpu')
 
 
-
+        # todo: edge features updates? we can update the features after the node update. Double check lin_edge inside conv
         x = self.conv1(x=x, edge_index=edge_index.to(torch.int64), edge_attr=edge_attr)
         # x = F.relu(x)  # some layers already have activation, but not all of them
         # x = F.dropout(x, training=self.training, p=0.2)  # not all layers have incorporated dropout, so we put it here

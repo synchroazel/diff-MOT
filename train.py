@@ -67,7 +67,7 @@ def train(model, train_loader, loss_function, optimizer, epochs, device, mps_fal
             optimizer.zero_grad()
             train_loss.backward()
             optimizer.step()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 5)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 100)
 
             total_train_loss += train_loss.item()
 
@@ -106,11 +106,11 @@ dtype = torch.float32
 
 # Hyperparameters
 backbone = 'resnet50'
-layer_type = 'GATv2Conv'
+layer_type = 'TransformerConv'
 subtrack_len = 10
-slide = 2
-linkage_window = 2
-l_size = 256
+slide = 5
+linkage_window = 5
+l_size = 128
 epochs = 1
 learning_rate = 0.001
 
@@ -131,7 +131,9 @@ model = Net(backbone=backbone,
             add_self_loops=False
             )
 
-loss_function = torch.nn.BCEWithLogitsLoss()
+# TODO: train - val in different videos
+
+loss_function = torch.nn.BCEWithLogitsLoss() # TODO: look at focal loss to deal with the imbalance
 optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
 
 # %% Set up the dataloader

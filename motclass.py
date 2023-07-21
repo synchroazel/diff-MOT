@@ -125,13 +125,17 @@ def build_graph(adjacency_list: torch.Tensor,
     adjacency_list = adjacency_list.t().contiguous()
     gt_adjacency_list = gt_adjacency_list.t().contiguous() if gt_adjacency_list is not None else None
 
-    # Naive pruning           distance of 20 pixel
-    pruned_mask = [False if x[0] < 0.05 else True for x in edge_attributes]
+    # Naive pruning  (edges)         distance of 20 pixel per time
+    pruned_mask = [False if x[0] < 0.05 * x[1] else True for x in edge_attributes]
     adjacency_list = adjacency_list[:, pruned_mask]
     edge_attributes = edge_attributes[pruned_mask, :]
     y = y[pruned_mask]
 #
-    # todo: graph pruning
+    # Naive pruning  (nodes)
+    # pruned_mask = [False if (detections[edge[0],:,:,:] - detections[edge[1],:,:,:]).abs().sum() / 255 > 2000 else True for edge in adjacency_list.t()]
+    # adjacency_list = adjacency_list[:, pruned_mask]
+    # edge_attributes = edge_attributes[pruned_mask, :]
+    # y = y[pruned_mask]
 
     return pyg_data.Data(
         edge_index=adjacency_list,
