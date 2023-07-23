@@ -10,6 +10,7 @@ from torchvision import transforms
 from torchvision.ops import box_convert
 from tqdm import tqdm
 
+from torch_geometric.transforms import KNNGraph
 import logging
 
 logging.basicConfig(format='[%(levelname)s] %(message)s', level=logging.INFO)
@@ -19,17 +20,27 @@ LINKAGE_TYPES = {
     "ALL": -1
 }
 
+class MOTGraph(pyg_data.Data):
 
-# adjacency_list, flattened_node_features, frame_times, centers_coords
+    def __init__(self, y, times, gt_adjacency_list, detections, **kwargs):
+        super().__init__( **kwargs)
+        self.y = y
+        self.times = times
+        self.gt_edge_index = gt_adjacency_list
+        self.detections = detections
+
+
+
 
 def build_graph(adjacency_list: torch.Tensor,
                 gt_adjacency_list: torch.Tensor,
-                y: torch.Tensor,
                 detections: torch.Tensor,
                 frame_times: torch.Tensor,
                 detections_coords: torch.Tensor,
                 device: torch.device,
-                dtype: torch.dtype = torch.float32) -> pyg_data.Data:
+                dtype: torch.dtype = torch.float32,
+                edge_pruning = (False, 20),
+                knn_pruning = (True, 15, False)) -> pyg_data.Data:
     """
     This function's purpose is to process the output of `track.get_data()` to build an appropriate graph.
 
@@ -44,17 +55,21 @@ def build_graph(adjacency_list: torch.Tensor,
     :return: a Pytorch Geometric graph object
     """
 
-    batch_size = 8  # used throughout edges and nodes processing
+
 
     detections = detections.to(dtype)
     number_of_nodes = len(detections)
-    edge_attributes = torch.zeros(len(y), 2)
+
 
     # for distance calculation
     detections_coords = box_convert(torch.clone(detections_coords).detach(), "xyxy", "cxcywh")
 
+    # assigned to data.pos, used for knn
+    position_matrix = torch.zeros((detections_coords.shape[0], 2))
+    position_matrix = detections_coords[:,(0,1)]
+
     # / 1000 is needed if we have 16bit floats, otherwise overflow will occur
-    detections_coords = detections_coords[:, (0, 1)] / 1000
+    # detections_coords = detections_coords[:, (0, 1)] / 1000
 
     """
     EDGES processing - edge features computation
@@ -102,15 +117,45 @@ def build_graph(adjacency_list: torch.Tensor,
     # if device == torch.device("mps"):
     #     detections_coords = detections_coords.float().cpu()
 
-    detections_dist = torch.cdist(detections_coords,
-                                  detections_coords, p=2).to('cpu')
+
+
+    # Prepare for pyg_data.Data
+    adjacency_list = adjacency_list.t().contiguous()
+    gt_adjacency_list = gt_adjacency_list.t().contiguous() if gt_adjacency_list is not None else None
+
+    # Naive pruning  (edges)         distance of 20 pixel per time
+    if edge_pruning[0]:
+        pruned_mask = [False if x[0] < (1 / edge_pruning[1]) * x[1] else True for x in edge_attributes]
+        adjacency_list = adjacency_list[:, pruned_mask]
+#
+    y=None
+    # todo: frame times
+    graph = MOTGraph(
+        edge_index=adjacency_list,
+        gt_adjacency_list=gt_adjacency_list,
+        y=y,
+        detections=detections,
+        num_nodes=number_of_nodes,
+        edge_attr=None,
+        pos=position_matrix,
+        times=frame_times
+    )
+
+    if knn_pruning[0]:
+        knn_morpher = KNNGraph(k=knn_pruning[1], loop=False, force_undirected=True, cosine=knn_pruning[2])
+        graph = knn_morpher(graph)
+
+    edge_attributes = torch.zeros(graph.edge_index.shape[1], 2)
+    # Those 2 are calculated here because knn_morpher does not update them
+    detections_dist = torch.cdist(graph.pos,
+                                  graph.pos, p=2).to('cpu')
     # Create a 1D Tensor with the distances of the detections ordered as the edges in the adj list
-    a = adjacency_list[:, 0].to('cpu').to(torch.int64)
-    b = adjacency_list[:, 1].to('cpu').to(torch.int64)
+    a = graph.edge_index.t()[:, 0].to('cpu').to(torch.int64)
+    b = graph.edge_index.t()[:, 1].to('cpu').to(torch.int64)
     edge_attributes[:, 0] = detections_dist[a, b]
 
     detections_dist = torch.cdist(frame_times.to(dtype),
-                                  frame_times.to(dtype), p=2).to('cpu') / 1000
+                                  frame_times.to(dtype), p=2).to('cpu')
 
     # Create a 1D Tensor with the distances of the detections ordered as the edges in the adj list
     edge_attributes[:, 1] = detections_dist[a, b]
@@ -119,33 +164,15 @@ def build_graph(adjacency_list: torch.Tensor,
     del a
     del b
 
-    edge_attributes = 1 / (edge_attributes.to(device) * 1000 + 0.00001)
+    edge_attributes = 1 / (edge_attributes.to(device) + 0.00001)
 
-    # Prepare for pyg_data.Data
-    adjacency_list = adjacency_list.t().contiguous()
-    gt_adjacency_list = gt_adjacency_list.t().contiguous() if gt_adjacency_list is not None else None
+    graph.edge_attr = edge_attributes
+    # Build `y` tensor to compare predictions with gt
+    gt_adjacency_set = set([tuple(x) for x in gt_adjacency_list.t().tolist()])
+    y = torch.tensor([1 if tuple(x) in gt_adjacency_set else 0 for x in graph.edge_index.t().tolist()]).to(dtype)
+    graph.y = y
 
-    # Naive pruning  (edges)         distance of 20 pixel per time
-    pruned_mask = [False if x[0] < 0.05 * x[1] else True for x in edge_attributes]
-    adjacency_list = adjacency_list[:, pruned_mask]
-    edge_attributes = edge_attributes[pruned_mask, :]
-    y = y[pruned_mask]
-#
-    # Naive pruning  (nodes)
-    # pruned_mask = [False if (detections[edge[0],:,:,:] - detections[edge[1],:,:,:]).abs().sum() / 255 > 2000 else True for edge in adjacency_list.t()]
-    # adjacency_list = adjacency_list[:, pruned_mask]
-    # edge_attributes = edge_attributes[pruned_mask, :]
-    # y = y[pruned_mask]
-
-    return pyg_data.Data(
-        edge_index=adjacency_list,
-        gt_edge_index=gt_adjacency_list,
-        y=y,
-        detections=detections,
-        num_nodes=number_of_nodes,
-        times=frame_times,
-        edge_attr=edge_attributes
-    )
+    return graph
 
 
 class MotTrack:
@@ -354,7 +381,6 @@ class MotTrack:
         """
 
         gt_adjacency_list = None
-        y = None
 
         # If detections ids are available (!= -1)
         if self.detections[0][0]['id'] != -1:
@@ -393,24 +419,7 @@ class MotTrack:
 
             logging.info(f"{len(gt_adjacency_list)} total gt edges ({len(all_paths)} trajectories)")
 
-            # Build `y` tensor to compare predictions with gt
-            gt_adjacency_set = set([tuple(x) for x in gt_adjacency_list.tolist()])
-            # for debug purposes
-            # gt_adjacency_set = list()
-            # for x in gt_adjacency_list.tolist():
-            #     gt_adjacency_set.append(tuple(x))
-            # gt_adjacency_set = set(gt_adjacency_set)
 
-
-            y = torch.tensor([1 if tuple(x) in gt_adjacency_set else 0 for x in adjacency_list.tolist()]).to(self.dtype)
-            # for debug purposes
-            # y = list()
-            # for x in adjacency_list.tolist():
-            #     if tuple(x) in gt_adjacency_set:
-            #         y.append(1)
-            #     else:
-            #         y.append(0)
-            # y = torch.tensor(y).to(self.device)
 
         else:
             logging.info(f"No ground truth adjacency list available")
@@ -422,7 +431,6 @@ class MotTrack:
         return {
             "adjacency_list": adjacency_list,
             "gt_adjacency_list": gt_adjacency_list,
-            "y": y,
             "detections": flattened_node_features,
             "frame_times": frame_times,
             "detections_coords": track_detections_coords

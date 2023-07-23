@@ -3,11 +3,10 @@ import os
 import torch
 from torch_geometric.transforms import ToDevice
 from tqdm import tqdm
-
+from torchvision.ops import sigmoid_focal_loss
 from model import Net
 from motclass import MotDataset
 from utilities import get_best_device, save_model
-
 device = get_best_device()
 
 
@@ -23,7 +22,7 @@ def single_validate(model, val_loader, idx, loss_function, device):
         data = ToDevice(device.type)(data)
         pred_edges = model(data)  # Get the predicted edge labels
         gt_edges = data.y  # Get the true edge labels
-        loss = loss_function(pred_edges, gt_edges)
+        loss = loss_function(pred_edges, gt_edges, reduction='mean')
         return loss.item()
 
 
@@ -61,7 +60,7 @@ def train(model, train_loader, loss_function, optimizer, epochs, device, mps_fal
             pred_edges = model(data)  # Get the predicted edge labels
             gt_edges = data.y  # Get the true edge labels
 
-            train_loss = loss_function(pred_edges, gt_edges)
+            train_loss = loss_function(pred_edges, gt_edges, reduction='mean')
 
             # Backward and optimize
             optimizer.zero_grad()
@@ -133,7 +132,8 @@ model = Net(backbone=backbone,
 
 # TODO: train - val in different videos
 
-loss_function = torch.nn.BCEWithLogitsLoss() # TODO: look at focal loss to deal with the imbalance
+# loss_function = torch.nn.BCEWithLogitsLoss() # TODO: look at focal loss to deal with the imbalance
+loss_function = sigmoid_focal_loss
 optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
 
 # %% Set up the dataloader

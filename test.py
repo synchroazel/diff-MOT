@@ -27,7 +27,7 @@ def test(model, val_loader, loss_function, output_file_folder="outcomes",device=
 
     val_loss, total_val_loss = 0, 0
 
-    pbar_dl = tqdm(enumerate(val_loader), desc='[TQDM] Training on track 1/? ', total=val_loader.n_subtracks)
+    pbar_dl = tqdm(enumerate(val_loader), desc='[TQDM] Testing on track 1/? ', total=val_loader.n_subtracks)
 
     for i, data in pbar_dl:
         cur_track_idx = val_loader.cur_track + 1
@@ -57,7 +57,7 @@ mot_path = '/media/dmmp/vid+backup/Data'
 saves_path = 'saves/models'
 
 # Model to load
-model_pkl = 'gatconv_128_resnet50-backbone.pkl'
+model_pkl = 'transformerconv_128_resnet50-backbone.pkl'
 
 # MOT to use
 mot = 'MOT20'
@@ -67,10 +67,10 @@ dtype = torch.float32
 
 # Hyperparameters
 backbone = 'resnet50'
-layer_type = 'GATConv'
+layer_type = 'TransformerConv'
 subtrack_len = 15
 slide = 15
-linkage_window = -1
+linkage_window = 5
 l_size = 128
 epochs = 1
 learning_rate = 0.001
@@ -86,8 +86,8 @@ model = load_model_pkl(model_path).to(device)
 
 model.mps_fallback = mps_fallback
 
-loss_function = torch.nn.BCELoss()
-optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, eps=1e-4)
+loss_function = torch.nn.BCEWithLogitsLoss()
+# optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, eps=1e-4)
 
 # %% Set up the dataloader
 
