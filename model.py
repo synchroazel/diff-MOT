@@ -11,6 +11,7 @@ from torch_geometric.typing import OptTensor, PairTensor, SparseTensor, Adj
 from torch_geometric.utils import softmax
 from torchvision import models
 
+# todo: capire come gestire la variabilità dei layers
 
 class ImgEncoder(torch.nn.Module):
     def __init__(self, model_name: str, weights: str = "DEFAULT", dtype=torch.float32):
@@ -88,10 +89,11 @@ class TransformerConvWithEdgeUpdate(torch_geometric.nn.TransformerConv):
         if edge_attr is not None:
             out = out + edge_attr
 
+        # out = torch.mean(out, dim=1)
         out = out * alpha.view(-1, self.heads, 1)
 
         #  ----> save edge attr <-----
-        self.__edge_attr__ = edge_attr # TODO: should we put key instead?
+        self.__edge_attr__ = torch.mean(edge_attr, 1) # TODO: should we put key instead?
 
         return out
 
@@ -171,7 +173,10 @@ class Net(torch.nn.Module):
         self.layer_size = layer_size
         self.backbone = backbone
         self.conv1 = self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size, **kwargs)
-        self.conv2 = self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size, **kwargs)
+        # e = self.conv1.edge_dim
+        # # TODO: kwargs
+        kwargs['edge_dim'] = layer_size
+        self.conv2 = self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size,**kwargs)
         self.predictor = EdgePredictor(layer_size, layer_size)
         self.dtype = dtype
         self.device = next(self.parameters()).device  # get the device the model is currently on
@@ -212,7 +217,7 @@ class Net(torch.nn.Module):
         # Use edge_index to find the corresponding node features in x
         x_i, x_j = x[edge_index[0].to(torch.int64)], x[edge_index[1].to(torch.int64)]
 
-        return self.predictor(x_i, x_j), edge_attr
+        return self.predictor(x_i, x_j)# , edge_attr
 
     def __str__(self):
         return self.layer_type.lower() + "_" + str(self.layer_size) + "_" + self.backbone + "-backbone"

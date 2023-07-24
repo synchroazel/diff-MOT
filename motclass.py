@@ -40,7 +40,7 @@ def build_graph(adjacency_list: torch.Tensor,
                 device: torch.device,
                 dtype: torch.dtype = torch.float32,
                 edge_pruning = (False, 20),
-                knn_pruning = (True, 15, False)) -> pyg_data.Data:
+                knn_pruning = (True, 5, False)) -> pyg_data.Data:
     """
     This function's purpose is to process the output of `track.get_data()` to build an appropriate graph.
 
@@ -125,11 +125,11 @@ def build_graph(adjacency_list: torch.Tensor,
 
     # Naive pruning  (edges)         distance of 20 pixel per time
     if edge_pruning[0]:
+        # todo: toggle for edge or knn
         pruned_mask = [False if x[0] < (1 / edge_pruning[1]) * x[1] else True for x in edge_attributes]
         adjacency_list = adjacency_list[:, pruned_mask]
 #
     y=None
-    # todo: frame times
     graph = MOTGraph(
         edge_index=adjacency_list,
         gt_adjacency_list=gt_adjacency_list,

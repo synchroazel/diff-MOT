@@ -56,7 +56,6 @@ def train(model, train_loader, loss_function, optimizer, epochs, device, mps_fal
                 save_model(model, mps_fallback=mps_fallback)
 
             """ Training step """
-
             pred_edges = model(data)  # Get the predicted edge labels
             gt_edges = data.y  # Get the true edge labels
 
@@ -106,12 +105,12 @@ dtype = torch.float32
 # Hyperparameters
 backbone = 'resnet50'
 layer_type = 'TransformerConv'
-subtrack_len = 10
-slide = 5
-linkage_window = 5
-l_size = 128
+subtrack_len = 15
+slide = 15
+linkage_window = -1
+l_size = 256
 epochs = 1
-learning_rate = 0.001
+learning_rate = 0.0001
 
 # Only if using MPS
 mps_fallback = False
@@ -124,9 +123,9 @@ model = Net(backbone=backbone,
             dtype=dtype,
             mps_fallback=True if device == torch.device('mps') else False,
             edge_dim=2,
-            heads=3,
+            heads=6,
             concat=False,
-            dropout=0.2,
+            dropout=0.3,
             add_self_loops=False
             )
 
