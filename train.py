@@ -7,6 +7,7 @@ from torchvision.ops import sigmoid_focal_loss
 from model import Net
 from motclass import MotDataset
 from utilities import get_best_device, save_model
+
 device = get_best_device()
 
 
@@ -26,7 +27,7 @@ def single_validate(model, val_loader, idx, loss_function, device):
         return loss.item()
 
 
-def train(model, train_loader, loss_function, optimizer, epochs, device, mps_fallback=False):
+def train(model, train_loader, val_loader, loss_function, optimizer, epochs, device, mps_fallback=False):
     model = model.to(device)
     model.train()
 
@@ -56,6 +57,7 @@ def train(model, train_loader, loss_function, optimizer, epochs, device, mps_fal
                 save_model(model, mps_fallback=mps_fallback)
 
             """ Training step """
+
             pred_edges = model(data)  # Get the predicted edge labels
             gt_edges = data.y  # Get the true edge labels
 
@@ -73,8 +75,7 @@ def train(model, train_loader, loss_function, optimizer, epochs, device, mps_fal
 
             """ Validation step """
 
-            val_loader = train_loader
-            val_loss = single_validate(model, val_loader, i + 1, loss_function, device)
+            val_loss = single_validate(model, val_loader, i, loss_function, device)
             total_val_loss += val_loss
 
             """ Update progress """
@@ -93,11 +94,11 @@ def train(model, train_loader, loss_function, optimizer, epochs, device, mps_fal
 # %% Set up parameters
 
 # Paths
-# mot_path = 'data'
-mot_path = '/media/dmmp/vid+backup/Data'
+mot_path = 'data'
 
 # MOT to use
-mot = 'MOT17'
+mot_train = 'MOT17'
+mot_val = 'MOT17'
 
 # Dtype to use
 dtype = torch.float32
@@ -113,7 +114,7 @@ epochs = 1
 learning_rate = 0.0001
 
 # Only if using MPS
-mps_fallback = False
+mps_fallback = True
 
 # %% Initialize the model
 
@@ -129,17 +130,16 @@ model = Net(backbone=backbone,
             add_self_loops=False
             )
 
-# TODO: train - val in different videos
-
 # loss_function = torch.nn.BCEWithLogitsLoss() # TODO: look at focal loss to deal with the imbalance
 loss_function = sigmoid_focal_loss
 optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
 
 # %% Set up the dataloader
 
-dataset_path = os.path.normpath(os.path.join(mot_path, mot))
+train_dataset_path = os.path.normpath(os.path.join(mot_path, mot_train))
+val_dataset_path = os.path.normpath(os.path.join(mot_path, mot_val))
 
-mot_train_dl = MotDataset(dataset_path=dataset_path,
+mot_train_dl = MotDataset(dataset_path=train_dataset_path,
                           split='train',
                           subtrack_len=subtrack_len,
                           slide=slide,
@@ -149,8 +149,22 @@ mot_train_dl = MotDataset(dataset_path=dataset_path,
                           dl_mode=True,
                           device=device,
                           dtype=dtype,
+                          mps_fallback=mps_fallback,
                           black_and_white_features=False)
+
+mot_val_dl = MotDataset(dataset_path=val_dataset_path,
+                        split='train',
+                        subtrack_len=subtrack_len,
+                        slide=slide,
+                        linkage_window=linkage_window,
+                        detections_file_folder='gt',
+                        detections_file_name='gt.txt',
+                        dl_mode=True,
+                        device=device,
+                        dtype=dtype,
+                        mps_fallback=mps_fallback,
+                        black_and_white_features=False)
 
 # %% Train the model
 
-train(model, mot_train_dl, loss_function, optimizer, epochs, device, mps_fallback=mps_fallback)
+train(model, mot_train_dl, mot_val_dl, loss_function, optimizer, epochs, device, mps_fallback)

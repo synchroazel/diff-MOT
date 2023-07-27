@@ -1,4 +1,8 @@
-"""Set of classes used to deal with datasets and tracks"""
+"""
+Set of classes used to deal with datasets and tracks.
+"""
+
+import logging
 import os
 
 import numpy as np
@@ -6,12 +10,10 @@ import torch
 import torch_geometric.data as pyg_data
 from PIL import Image
 from torch.utils.data import Dataset
+from torch_geometric.transforms import KNNGraph
 from torchvision import transforms
 from torchvision.ops import box_convert
 from tqdm import tqdm
-
-from torch_geometric.transforms import KNNGraph
-import logging
 
 logging.basicConfig(format='[%(levelname)s] %(message)s', level=logging.INFO)
 
@@ -20,16 +22,15 @@ LINKAGE_TYPES = {
     "ALL": -1
 }
 
+
 class MOTGraph(pyg_data.Data):
 
     def __init__(self, y, times, gt_adjacency_list, detections, **kwargs):
-        super().__init__( **kwargs)
+        super().__init__(**kwargs)
         self.y = y
         self.times = times
         self.gt_edge_index = gt_adjacency_list
         self.detections = detections
-
-
 
 
 def build_graph(adjacency_list: torch.Tensor,
@@ -39,77 +40,40 @@ def build_graph(adjacency_list: torch.Tensor,
                 detections_coords: torch.Tensor,
                 device: torch.device,
                 dtype: torch.dtype = torch.float32,
-                edge_pruning = (False, 20),
-                knn_pruning = (True, 5, False)) -> pyg_data.Data:
+                mps_fallback: bool = False,
+                naive_pruning_args=None,
+                knn_pruning_args=None) -> pyg_data.Data:
     """
     This function's purpose is to process the output of `track.get_data()` to build an appropriate graph.
 
     :param adjacency_list: tensor which represents the adjacency list. This will be used as 'edge_index'
     :param gt_adjacency_list: tensor which represents the ground truth adjacency list
-    :param y
     :param detections: tensor which represents the node image
     :param frame_times: time distances of the frames
     :param detections_coords: coordinates of the detections bboxes
     :param device: device to use, either mps, cuda or cpu
     :param dtype: data type to use
+    :param mps_fallback: if True, will fallback to cpu on certain operations if not supported by MPS
+    :param naive_pruning_args: args for naive pruning {"dist": int} - if None pruning is disabled
+    :param knn_pruning_args: args for knn pruning {"k": int, "cosine": bool} - if None pruning is disabled
     :return: a Pytorch Geometric graph object
     """
 
-
+    if knn_pruning_args is not None and naive_pruning_args is not None:
+        raise ValueError("Cannot use multiple pruning methods at the same time.")
 
     detections = detections.to(dtype)
     number_of_nodes = len(detections)
-
 
     # for distance calculation
     detections_coords = box_convert(torch.clone(detections_coords).detach(), "xyxy", "cxcywh")
 
     # assigned to data.pos, used for knn
-    position_matrix = torch.zeros((detections_coords.shape[0], 2))
-    position_matrix = detections_coords[:,(0,1)]
+    # position_matrix = torch.zeros((detections_coords.shape[0], 2))
+    position_matrix = detections_coords[:, (0, 1)]
 
     # / 1000 is needed if we have 16bit floats, otherwise overflow will occur
     # detections_coords = detections_coords[:, (0, 1)] / 1000
-
-    """
-    EDGES processing - edge features computation
-    """
-
-    """ Detection features difference [ON HOLD]
-
-    # Precompute the # of batches
-    n_batches = int(np.ceil(adjacency_list.shape[0] / batch_size))
-
-    # Precompute edge features, `vstack` causes memory leak
-    final_edge_attributes = torch.zeros((edge_partial_attributes.shape[0], detections.shape[1] + 1),
-                                        dtype=torch.float16)
-    final_edge_attributes[:, 0] = edge_partial_attributes.t()
-    del edge_partial_attributes
-
-    pbar = tqdm(range(0, int(n_batches)), desc="Processing edges")
-
-    for batch_idx in pbar:
-
-        for i in range(0, batch_size, 2):
-
-            element_index = (batch_idx * batch_size) + i
-
-            if element_index >= adjacency_list.shape[0]:
-                break
-
-            node1 = detections[adjacency_list[element_index][0]]
-            node2 = detections[adjacency_list[element_index][1]]
-
-            difference = (node1 - node2).to(torch.float16)
-
-            final_edge_attributes[element_index, 1:] = difference
-            final_edge_attributes[element_index + 1, 1:] = difference
-
-        pass
-        
-    """
-
-    """ Detections distance """
 
     # detections_dist = torch.cdist(detections_coords.to(torch.float32), detections_coords.to(torch.float32)).to(dtype)
 
@@ -117,23 +81,14 @@ def build_graph(adjacency_list: torch.Tensor,
     # if device == torch.device("mps"):
     #     detections_coords = detections_coords.float().cpu()
 
-
-
     # Prepare for pyg_data.Data
     adjacency_list = adjacency_list.t().contiguous()
     gt_adjacency_list = gt_adjacency_list.t().contiguous() if gt_adjacency_list is not None else None
 
-    # Naive pruning  (edges)         distance of 20 pixel per time
-    if edge_pruning[0]:
-        # todo: toggle for edge or knn
-        pruned_mask = [False if x[0] < (1 / edge_pruning[1]) * x[1] else True for x in edge_attributes]
-        adjacency_list = adjacency_list[:, pruned_mask]
-#
-    y=None
     graph = MOTGraph(
         edge_index=adjacency_list,
         gt_adjacency_list=gt_adjacency_list,
-        y=y,
+        y=None,
         detections=detections,
         num_nodes=number_of_nodes,
         edge_attr=None,
@@ -141,36 +96,54 @@ def build_graph(adjacency_list: torch.Tensor,
         times=frame_times
     )
 
-    if knn_pruning[0]:
-        knn_morpher = KNNGraph(k=knn_pruning[1], loop=False, force_undirected=True, cosine=knn_pruning[2])
+    # kNN edge pruning
+    if knn_pruning_args is not None:
+
+        if mps_fallback:
+            graph = graph.to('cpu')
+
+        knn_morpher = KNNGraph(**knn_pruning_args, loop=False, force_undirected=True)
         graph = knn_morpher(graph)
 
+        if mps_fallback:
+            graph = graph.to('mps')
+
     edge_attributes = torch.zeros(graph.edge_index.shape[1], 2)
+
     # Those 2 are calculated here because knn_morpher does not update them
     detections_dist = torch.cdist(graph.pos,
                                   graph.pos, p=2).to('cpu')
+
     # Create a 1D Tensor with the distances of the detections ordered as the edges in the adj list
     a = graph.edge_index.t()[:, 0].to('cpu').to(torch.int64)
     b = graph.edge_index.t()[:, 1].to('cpu').to(torch.int64)
     edge_attributes[:, 0] = detections_dist[a, b]
 
+    # Compute the spatial distance between the detections
     detections_dist = torch.cdist(frame_times.to(dtype),
                                   frame_times.to(dtype), p=2).to('cpu')
 
     # Create a 1D Tensor with the distances of the detections ordered as the edges in the adj list
     edge_attributes[:, 1] = detections_dist[a, b]
 
+    # Delete the tensors to free up memory
     del detections_dist
     del a
     del b
 
+    # Assign edge attributes to the graph
     edge_attributes = 1 / (edge_attributes.to(device) + 0.00001)
-
     graph.edge_attr = edge_attributes
+
     # Build `y` tensor to compare predictions with gt
     gt_adjacency_set = set([tuple(x) for x in gt_adjacency_list.t().tolist()])
     y = torch.tensor([1 if tuple(x) in gt_adjacency_set else 0 for x in graph.edge_index.t().tolist()]).to(dtype)
     graph.y = y
+
+    # Naive edge pruning - distance of 20 pixel per time
+    if naive_pruning_args is not None:
+        pruned_mask = [False if x[0] < (1 / naive_pruning_args['dist']) * x[1] else True for x in edge_attributes]
+        graph.edge_index = adjacency_list[:, pruned_mask]
 
     return graph
 
@@ -184,12 +157,12 @@ class MotTrack:
                  det_resize: tuple,
                  linkage_window: int,
                  subtrack_len: int,
-
                  device: torch.device,
                  dtype: torch.dtype = torch.float32,
                  logging_lv: int = logging.INFO,
                  name: str = "track",
-                 black_and_white_features=False):
+                 black_and_white_features=False,
+                 pruning: int = 1):
 
         # Set logging level
         logging.getLogger().setLevel(logging_lv)
@@ -205,14 +178,15 @@ class MotTrack:
         self.n_nodes = []
         self.dtype = dtype
         self.logging_lv = logging_lv
-        self.black_and_white_features=black_and_white_features
+        self.black_and_white_features = black_and_white_features
 
+        logging.info(f"{self.n_frames} frames")
+
+        # CHeck if the chosen linkage window is possible
         if self.linkage_window > self.n_frames:
             logging.warning(f"`linkage window` was set to {self.linkage_window} but track has {self.n_frames} frames."
                             f"Setting `linkage window` to {self.n_frames}")
             self.linkage_window = self.n_frames
-
-        logging.info(f"{self.n_frames} frames")
 
     # def __str__(self):
     #
@@ -419,8 +393,6 @@ class MotTrack:
 
             logging.info(f"{len(gt_adjacency_list)} total gt edges ({len(all_paths)} trajectories)")
 
-
-
         else:
             logging.info(f"No ground truth adjacency list available")
 
@@ -452,6 +424,9 @@ class MotDataset(Dataset):
                  slide: int = 1,
                  dl_mode: bool = False,
                  black_and_white_features=False,
+                 naive_pruning_args=None,
+                 knn_pruning_args=None,
+                 mps_fallback: bool = False,
                  device: torch.device = torch.device("cpu"),
                  dtype=torch.float32):
         self.dataset_dir = dataset_path
@@ -463,26 +438,36 @@ class MotDataset(Dataset):
         self.linkage_window = linkage_window
         self.slide = slide
         self.subtrack_len = subtrack_len
+        self.mps_fallback = mps_fallback
         self.black_and_white_features = black_and_white_features
         self.device = device
         self.dl_mode = dl_mode
         self.dtype = dtype
         self.name = dataset_path.split('/')[-1] if name is None else name
+        self.frames_per_track = None
+        self.n_subtracks = None
+        self.cur_track = None
+        self.str_frame = None
+        self.end_frame = None
+        self.start_frames = None
+        self.tracks = None
 
+        # Initialization for pruning arguments
+        if naive_pruning_args is None:
+            self.naive_pruning_args = None  # {"dist": 20}
+        if knn_pruning_args is None:
+            self.knn_pruning_args = {"k": 5, "cosine": False}
+
+        # Get tracklist from the split specified
         assert split in os.listdir(self.dataset_dir), \
             f"Split must be one of {os.listdir(self.dataset_dir)}."
-
         self.tracklist = os.listdir(os.path.join(self.dataset_dir, split))
 
+        # Set the logging level according to the use we're doing of the dataset
         if self.dl_mode:
             logging.getLogger().setLevel(logging.WARNING)
 
-        self.tracklist = os.listdir(os.path.join(self.dataset_dir, split))
-
-        if self.dl_mode:
-            logging.getLogger().setLevel(logging.WARNING)
-
-        # precompute if slide or subtrack_len is provided
+        # Precompute if slide or subtrack_len is provided
         if self.slide > 1 or self.subtrack_len > 1:
             self.precompute_subtracks()
 
@@ -514,7 +499,7 @@ class MotDataset(Dataset):
     def _read_detections(det_file) -> dict:
         """Read detections into a dictionary"""
 
-        file = np.loadtxt(det_file, delimiter=",")  # , usecols=tuple(range(5)))
+        file = np.loadtxt(det_file, delimiter=",")
 
         detections = {}
         for det in file:
@@ -555,7 +540,6 @@ class MotDataset(Dataset):
         ending_frame = starting_frame + self.subtrack_len
 
         logging.debug(f"From {starting_frame} to {ending_frame}")
-
         logging.debug(f"Starting in track: {cur_track}")
         logging.debug(f"From {starting_frame} to {ending_frame} of track {cur_track}")
 
@@ -580,6 +564,11 @@ class MotDataset(Dataset):
                          name=self.name + "/track_" + str(self.tracklist[cur_track]) + "/subtrack_" + str(idx))
 
         if self.dl_mode:
-            return build_graph(**track.get_data(), device=self.device, dtype=self.dtype)
+            return build_graph(**track.get_data(),
+                               mps_fallback=self.mps_fallback,
+                               device=self.device,
+                               dtype=self.dtype,
+                               naive_pruning_args=self.naive_pruning_args,
+                               knn_pruning_args=self.knn_pruning_args)
         else:
             return track
