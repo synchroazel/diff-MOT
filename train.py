@@ -23,8 +23,16 @@ def single_validate(model, val_loader, idx, loss_function, device):
         data = ToDevice(device.type)(data)
         pred_edges = model(data)  # Get the predicted edge labels
         gt_edges = data.y  # Get the true edge labels
-        loss = loss_function(pred_edges, gt_edges, reduction='mean')
-        return loss.item()
+
+        # Check how many gt 1s have been predicted correctly
+
+        gt_ones = gt_edges.nonzero()
+        acc_on_ones = torch.where(pred_edges[gt_ones] == 1.0, 1., 0.).mean()
+
+        # acc_on_ones = torch.mean(torch.eq(pred_edges.round(), gt_edges.nonzero()).tolist())
+
+        loss = loss_function(pred_edges, gt_edges, reduction='sum', alpha=0.99, gamma=5)
+        return loss.item(), acc_on_ones
 
 
 def train(model, train_loader, val_loader, loss_function, optimizer, epochs, device, mps_fallback=False):
@@ -42,7 +50,7 @@ def train(model, train_loader, val_loader, loss_function, optimizer, epochs, dev
         pbar_dl = tqdm(enumerate(train_loader), desc='[TQDM] Training on track 1/? ', total=train_loader.n_subtracks)
 
         last_track_idx = 0
-
+        i = 0
         for i, data in pbar_dl:
             data = ToDevice(device.type)(data)
 
@@ -61,7 +69,7 @@ def train(model, train_loader, val_loader, loss_function, optimizer, epochs, dev
             pred_edges = model(data)  # Get the predicted edge labels
             gt_edges = data.y  # Get the true edge labels
 
-            train_loss = loss_function(pred_edges, gt_edges, reduction='mean')
+            train_loss = loss_function(pred_edges, gt_edges, reduction='sum', alpha=1 - 1/10, gamma=5)
 
             # Backward and optimize
             optimizer.zero_grad()
@@ -75,16 +83,17 @@ def train(model, train_loader, val_loader, loss_function, optimizer, epochs, dev
 
             """ Validation step """
 
-            val_loss = single_validate(model, val_loader, i, loss_function, device)
+            val_loss, val_acc = single_validate(model, val_loader, i, loss_function, device)
             total_val_loss += val_loss
 
             """ Update progress """
 
             avg_train_loss_msg = f'avg.Tr.Loss: {(total_train_loss / (i + 1)):.4f} (last: {train_loss:.4f})'
             avg_val_loss_msg = f'avg.Val.Loss: {(total_val_loss / (i + 1)):.4f} (last: {val_loss:.4f})'
+            last_val_acc = f'Val.Acc: {val_acc:.4f}'
 
             pbar_ep.set_description(
-                f'[TQDM] Epoch #{epoch + 1} - {avg_train_loss_msg} - {avg_val_loss_msg}')
+                f'[TQDM] Epoch #{epoch + 1} - {avg_train_loss_msg} - {avg_val_loss_msg} | {last_val_acc}')
 
             last_track_idx = cur_track_idx
 
@@ -98,14 +107,14 @@ mot_path = 'data'
 
 # MOT to use
 mot_train = 'MOT17'
-mot_val = 'MOT17'
+mot_val = 'MOT20'
 
 # Dtype to use
 dtype = torch.float32
 
 # Hyperparameters
 backbone = 'resnet50'
-layer_type = 'TransformerConv'
+layer_type = 'GeneralConv'
 subtrack_len = 15
 slide = 15
 linkage_window = -1
@@ -123,7 +132,7 @@ model = Net(backbone=backbone,
             layer_size=l_size,
             dtype=dtype,
             mps_fallback=True if device == torch.device('mps') else False,
-            edge_dim=2,
+            in_edge_channels=2,
             heads=6,
             concat=False,
             dropout=0.3,

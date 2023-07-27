@@ -7,9 +7,13 @@ import torch_geometric.nn
 from efficientnet_pytorch import EfficientNet
 from torch import Tensor
 from torch import nn
+from torch_geometric.nn.dense.linear import Linear, Parameter
 from torch_geometric.typing import OptTensor, PairTensor, SparseTensor, Adj
-from torch_geometric.utils import softmax
+from torch_geometric.utils import add_self_loops, degree, softmax
 from torchvision import models
+from torch_geometric.nn.inits import glorot
+from torch_geometric.typing import Adj, Optional, OptPairTensor, OptTensor, Size
+
 
 # todo: capire come gestire la variabilità dei layers
 
@@ -60,12 +64,13 @@ class EdgePredictor(torch.nn.Module):
         x = torch.cat([x_i, x_j], dim=-1)  # Concatenate node features.
         x = F.relu(self.lin1(x))
         x = F.dropout(x, training=self.training)
-        x = self.lin2(x)#.squeeze()
+        x = self.lin2(x)  # .squeeze()
         x = torch.sigmoid(x).squeeze()
         return x
 
+
 class TransformerConvWithEdgeUpdate(torch_geometric.nn.TransformerConv):
-    def __init__(self,**kwargs):
+    def __init__(self, **kwargs):
         super(TransformerConvWithEdgeUpdate, self).__init__(**kwargs)
 
     def message(self, query_i: Tensor, key_j: Tensor, value_j: Tensor,
@@ -93,7 +98,7 @@ class TransformerConvWithEdgeUpdate(torch_geometric.nn.TransformerConv):
         out = out * alpha.view(-1, self.heads, 1)
 
         #  ----> save edge attr <-----
-        self.__edge_attr__ = torch.mean(edge_attr, 1) # TODO: should we put key instead?
+        self.__edge_attr__ = torch.mean(edge_attr, 1)  # TODO: should we put key instead?
 
         return out
 
@@ -151,6 +156,133 @@ class TransformerConvWithEdgeUpdate(torch_geometric.nn.TransformerConv):
             self.__edge_attr__ = None
             return out, edge_features
 
+
+class GeneralConvWithEdgeUpdate(torch_geometric.nn.MessagePassing):
+    r"""A general GNN layer adapted from the `"Design Space for Graph Neural
+    Networks" <https://arxiv.org/abs/2011.08843>`_ paper."""
+
+    def __init__(
+            self,
+            in_channels: Union[int, tuple[int, int]],
+            out_channels: Optional[int],
+            in_edge_channels: int = None,
+            aggr: str = "add",
+            skip_linear: str = False,
+            directed_msg: bool = True,
+            heads: int = 1,
+            attention: bool = False,
+            attention_type: str = "additive",
+            l2_normalize: bool = False,
+            bias: bool = True,
+            **kwargs,
+    ):
+        kwargs.setdefault('aggr', aggr)
+        super().__init__(node_dim=0, **kwargs)
+
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.in_edge_channels = in_edge_channels
+        self.aggr = aggr
+        self.skip_linear = skip_linear
+        self.directed_msg = directed_msg
+        self.heads = heads
+        self.attention = attention
+        self.attention_type = attention_type
+        self.normalize_l2 = l2_normalize
+
+        if isinstance(in_channels, int):
+            in_channels = (in_channels, in_channels)
+
+        if self.directed_msg:
+            self.lin_msg = Linear(in_channels[0], out_channels * self.heads,
+                                  bias=bias)
+        else:
+            self.lin_msg = Linear(in_channels[0], out_channels * self.heads,
+                                  bias=bias)
+            self.lin_msg_i = Linear(in_channels[0], out_channels * self.heads,
+                                    bias=bias)
+
+        if self.skip_linear or self.in_channels != self.out_channels:
+            self.lin_self = Linear(in_channels[1], out_channels, bias=bias)
+        else:
+            self.lin_self = torch.nn.Identity()
+
+        if self.in_edge_channels is not None:
+            self.lin_edge = Linear(in_edge_channels, out_channels * self.heads,
+                                   bias=bias)
+
+        # TODO: A general torch_geometric.nn.AttentionLayer
+        if self.attention:
+            if self.attention_type == 'additive':
+                self.att_msg = Parameter(
+                    torch.Tensor(1, self.heads, self.out_channels))
+            elif self.attention_type == 'dot_product':
+                self.scaler = torch.sqrt(
+                    torch.tensor(out_channels, dtype=torch.float))
+            else:
+                raise ValueError(
+                    f"Attention type '{self.attention_type}' not supported")
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        super().reset_parameters()
+        self.lin_msg.reset_parameters()
+        if hasattr(self.lin_self, 'reset_parameters'):
+            self.lin_self.reset_parameters()
+        if self.in_edge_channels is not None:
+            self.lin_edge.reset_parameters()
+        if self.attention and self.attention_type == 'additive':
+            glorot(self.att_msg)
+
+    def forward(self, x: Union[Tensor, OptPairTensor], edge_index: Adj,
+                edge_attr: Tensor = None, size: Size = None) -> tuple[Tensor, Tensor]:
+
+        if isinstance(x, Tensor):
+            x: OptPairTensor = (x, x)
+        x_self = x[1]
+        # propagate_type: (x: OptPairTensor)
+        out = self.propagate(edge_index, x=x, size=size, edge_attr=edge_attr)
+        out = out.mean(dim=1)  # todo: other approach to aggregate heads
+        out = out + self.lin_self(x_self)
+        if self.normalize_l2:
+            out = F.normalize(out, p=2, dim=-1)
+
+        edge_attr = self.__edge_attr__
+        self.__edge_attr__ = None
+
+        return out, edge_attr
+
+    def message_basic(self, x_i: Tensor, x_j: Tensor, edge_attr: OptTensor):
+        if self.directed_msg:
+            x_j = self.lin_msg(x_j)
+        else:
+            x_j = self.lin_msg(x_j) + self.lin_msg_i(x_i)
+        if edge_attr is not None:
+            lin_edge_attr = self.lin_edge(edge_attr)
+            x_j = x_j + lin_edge_attr
+            self.__edge_attr__ = lin_edge_attr
+        return x_j
+
+    def message(self, x_i: Tensor, x_j: Tensor, edge_index_i: Tensor,
+                size_i: Tensor, edge_attr: Tensor) -> Tensor:
+        x_j_out = self.message_basic(x_i, x_j, edge_attr)
+        x_j_out = x_j_out.view(-1, self.heads, self.out_channels)
+        if self.attention:
+            if self.attention_type == 'dot_product':
+                x_i_out = self.message_basic(x_j, x_i, edge_attr)
+                x_i_out = x_i_out.view(-1, self.heads, self.out_channels)
+                alpha = (x_i_out * x_j_out).sum(dim=-1) / self.scaler
+            else:
+                alpha = (x_j_out * self.att_msg).sum(dim=-1)
+            alpha = F.leaky_relu(alpha, negative_slope=0.2)
+            alpha = softmax(alpha, edge_index_i, num_nodes=size_i)
+            alpha = alpha.view(-1, self.heads, 1)
+            return x_j_out * alpha
+        else:
+            return x_j_out
+
+
 class Net(torch.nn.Module):
     # We should use only layers that support edge features
     layer_aliases = {
@@ -163,20 +295,24 @@ class Net(torch.nn.Module):
         # 'CGConv': torch_geometric.nn.CGConv,  # https://journals.aps.org/prl/abstract/10.1103/PhysRevLett.120.145301
         # 'PNAConv': torch_geometric.nn.PNAConv,  # https://arxiv.org/abs/2004.05718
         'GENConv': torch_geometric.nn.GENConv,  # https://arxiv.org/abs/2006.07739
-        'GeneralConv': torch_geometric.nn.GeneralConv,  # https://arxiv.org/abs/2011.08843
+        'GeneralConv': GeneralConvWithEdgeUpdate  # https://arxiv.org/abs/2011.08843
     }
 
-    def __init__(self, backbone, layer_size, layer_tipe='GATConv', dtype=torch.float32, mps_fallback=False, **kwargs):
+    def __init__(self, backbone, layer_size, steps=2, layer_tipe='TransformerConv', dtype=torch.float32,
+                 mps_fallback=False, **kwargs):
         super(Net, self).__init__()
         self.fextractor = ImgEncoder(backbone, dtype=dtype)
         self.layer_type = layer_tipe
         self.layer_size = layer_size
         self.backbone = backbone
         self.conv1 = self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size, **kwargs)
-        # e = self.conv1.edge_dim
-        # # TODO: kwargs
         kwargs['edge_dim'] = layer_size
-        self.conv2 = self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size,**kwargs)
+        kwargs['in_edge_channels'] = layer_size * kwargs['heads']
+        for i in range(2, steps + 1):
+            layer = "self.conv" + str(
+                i) + " = self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size,**kwargs)"
+            exec(layer)
+        self.number_of_message_passing_layers = steps
         self.predictor = EdgePredictor(layer_size, layer_size)
         self.dtype = dtype
         self.device = next(self.parameters()).device  # get the device the model is currently on
@@ -187,7 +323,7 @@ class Net(torch.nn.Module):
         if self.mps_fallback:
             print('[INFO] Falling back to CPU for conv layers.')
 
-    def forward(self, data)-> tuple:
+    def forward(self, data) -> tuple:
         # 1
         data.x = self.fextractor(data.detections)
 
@@ -204,11 +340,10 @@ class Net(torch.nn.Module):
             self.conv2.to('cpu')
 
         # 2
-        # todo: edge features updates? we can update the features after the node update. Double check lin_edge inside conv
-        x, edge_attr = self.conv1(x=x, edge_index=edge_index.to(torch.int64), edge_attr=edge_attr)
-        # x = F.relu(x)  # some layers already have activation, but not all of them
-        # x = F.dropout(x, training=self.training, p=0.2)  # not all layers have incorporated dropout, so we put it here
-        x, edge_attr = self.conv2(x=x, edge_index=edge_index.to(torch.int64), edge_attr=edge_attr)
+        for i in range(1, self.number_of_message_passing_layers + 1):
+            message_passing = " self.conv" + str(
+                i) + "(x=x, edge_index=edge_index.to(torch.int64), edge_attr=edge_attr)"
+            x, edge_attr = eval(message_passing)
 
         # Back on MPS after the convolutions
         if self.mps_fallback:
@@ -217,7 +352,7 @@ class Net(torch.nn.Module):
         # Use edge_index to find the corresponding node features in x
         x_i, x_j = x[edge_index[0].to(torch.int64)], x[edge_index[1].to(torch.int64)]
 
-        return self.predictor(x_i, x_j)# , edge_attr
+        return self.predictor(x_i, x_j)  # , edge_attr
 
     def __str__(self):
         return self.layer_type.lower() + "_" + str(self.layer_size) + "_" + self.backbone + "-backbone"
