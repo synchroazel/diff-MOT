@@ -166,17 +166,18 @@ class Net(torch.nn.Module):
         'GeneralConv': torch_geometric.nn.GeneralConv,  # https://arxiv.org/abs/2011.08843
     }
 
-    def __init__(self, backbone, layer_size, layer_tipe='GATConv', dtype=torch.float32, mps_fallback=False, **kwargs):
+    def __init__(self, backbone, layer_size,steps=2, layer_tipe='TransformerConv', dtype=torch.float32, mps_fallback=False, **kwargs):
         super(Net, self).__init__()
         self.fextractor = ImgEncoder(backbone, dtype=dtype)
         self.layer_type = layer_tipe
         self.layer_size = layer_size
         self.backbone = backbone
         self.conv1 = self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size, **kwargs)
-        # e = self.conv1.edge_dim
-        # # TODO: kwargs
         kwargs['edge_dim'] = layer_size
-        self.conv2 = self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size,**kwargs)
+        for i in range(2, steps+1):
+            layer = "self.conv" + str(i) +" = self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size,**kwargs)"
+            exec( layer)
+        self.number_of_message_passing_layers = steps
         self.predictor = EdgePredictor(layer_size, layer_size)
         self.dtype = dtype
         self.device = next(self.parameters()).device  # get the device the model is currently on
@@ -204,11 +205,9 @@ class Net(torch.nn.Module):
             self.conv2.to('cpu')
 
         # 2
-        # todo: edge features updates? we can update the features after the node update. Double check lin_edge inside conv
-        x, edge_attr = self.conv1(x=x, edge_index=edge_index.to(torch.int64), edge_attr=edge_attr)
-        # x = F.relu(x)  # some layers already have activation, but not all of them
-        # x = F.dropout(x, training=self.training, p=0.2)  # not all layers have incorporated dropout, so we put it here
-        x, edge_attr = self.conv2(x=x, edge_index=edge_index.to(torch.int64), edge_attr=edge_attr)
+        for i in range(1, self.number_of_message_passing_layers + 1):
+            message_passing = " self.conv"+str(i)+"(x=x, edge_index=edge_index.to(torch.int64), edge_attr=edge_attr)"
+            x, edge_attr = eval(message_passing)
 
         # Back on MPS after the convolutions
         if self.mps_fallback:

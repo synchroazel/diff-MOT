@@ -22,7 +22,7 @@ def single_validate(model, val_loader, idx, loss_function, device):
         data = ToDevice(device.type)(data)
         pred_edges = model(data)  # Get the predicted edge labels
         gt_edges = data.y  # Get the true edge labels
-        loss = loss_function(pred_edges, gt_edges, reduction='mean')
+        loss = loss_function(pred_edges, gt_edges, reduction='mean', alpha=1 - 1/10, gamma=5)
         return loss.item()
 
 
@@ -41,7 +41,7 @@ def train(model, train_loader, loss_function, optimizer, epochs, device, mps_fal
         pbar_dl = tqdm(enumerate(train_loader), desc='[TQDM] Training on track 1/? ', total=train_loader.n_subtracks)
 
         last_track_idx = 0
-
+        i = 0
         for i, data in pbar_dl:
             data = ToDevice(device.type)(data)
 
@@ -59,7 +59,7 @@ def train(model, train_loader, loss_function, optimizer, epochs, device, mps_fal
             pred_edges = model(data)  # Get the predicted edge labels
             gt_edges = data.y  # Get the true edge labels
 
-            train_loss = loss_function(pred_edges, gt_edges, reduction='mean')
+            train_loss = loss_function(pred_edges, gt_edges, reduction='mean', alpha=1 - 1/10, gamma=5)
 
             # Backward and optimize
             optimizer.zero_grad()
