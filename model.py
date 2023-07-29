@@ -1,3 +1,4 @@
+import logging
 import math
 from typing import Optional, Union
 
@@ -15,7 +16,7 @@ from torch_geometric.nn.inits import glorot
 from torch_geometric.typing import Adj, Optional, OptPairTensor, OptTensor, Size
 
 
-# todo: capire come gestire la variabilità dei layers
+# TODO: capire come gestire la variabilità dei layers
 
 class ImgEncoder(torch.nn.Module):
     def __init__(self, model_name: str, weights: str = "DEFAULT", dtype=torch.float32):
@@ -53,10 +54,25 @@ class ImgEncoder(torch.nn.Module):
             return features
 
 
-class EdgePredictor(torch.nn.Module):
+class EdgePredictorFromEdges(torch.nn.Module):
     def __init__(self, in_channels, hidden_channels):
-        super(EdgePredictor, self).__init__()
-        self.lin1 = nn.Linear(in_channels * 2, hidden_channels)
+        super().__init__()
+        self.lin1 = nn.Linear(in_channels, hidden_channels)
+        self.lin2 = nn.Linear(hidden_channels, 1)
+
+    def forward(self, edge_attr):
+        x = F.relu(self.lin1(edge_attr))
+        x = F.dropout(x, training=self.training)
+        x = self.lin2(x)
+        x = torch.sigmoid(x)  # CLARIFY SIGMOID THING
+        x = x.squeeze()
+        return x
+
+
+class EdgePredictorFromNodes(torch.nn.Module):
+    def __init__(self, in_channels, hidden_channels):
+        super().__init__()
+        self.lin1 = nn.Linear(4362, hidden_channels)
         self.lin2 = nn.Linear(hidden_channels, 1)
 
     def forward(self, x_i, x_j):
@@ -248,6 +264,7 @@ class GeneralConvWithEdgeUpdate(torch_geometric.nn.MessagePassing):
         if self.normalize_l2:
             out = F.normalize(out, p=2, dim=-1)
 
+        #  ----> save edge attr <-----
         edge_attr = self.__edge_attr__
         self.__edge_attr__ = None
 
@@ -298,22 +315,53 @@ class Net(torch.nn.Module):
         'GeneralConv': GeneralConvWithEdgeUpdate  # https://arxiv.org/abs/2011.08843
     }
 
-    def __init__(self, backbone, layer_size, steps=2, layer_tipe='TransformerConv', dtype=torch.float32,
-                 mps_fallback=False, **kwargs):
+    def __init__(self,
+                 backbone,
+                 layer_size,
+                 steps=2,
+                 layer_tipe='GeneralConv',
+                 dtype=torch.float32,
+                 mps_fallback=False,
+                 **kwargs):
         super(Net, self).__init__()
         self.fextractor = ImgEncoder(backbone, dtype=dtype)
         self.layer_type = layer_tipe
         self.layer_size = layer_size
         self.backbone = backbone
-        self.conv1 = self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size, **kwargs)
+
+        self.conv_in = self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size, **kwargs)
+
         kwargs['edge_dim'] = layer_size
         kwargs['in_edge_channels'] = layer_size * kwargs['heads']
-        for i in range(2, steps + 1):
-            layer = "self.conv" + str(
-                i) + " = self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size,**kwargs)"
-            exec(layer)
+
+        # for i in range(2, steps + 1):
+        #     layer = "self.conv" + str(
+        #         i) + " = self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size,**kwargs)"
+        #     exec(layer)
+
         self.number_of_message_passing_layers = steps
-        self.predictor = EdgePredictor(layer_size, layer_size)
+
+        if steps <= 10:
+            self.number_of_message_passing_layers = steps
+        else:
+            logging.warning("Max number of message passing layers implemented is 10. Falling back to 10.")
+            self.number_of_message_passing_layers = 10
+
+        self.conv = [
+            self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size, **kwargs),
+            self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size, **kwargs),
+            self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size, **kwargs),
+            self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size, **kwargs),
+            self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size, **kwargs),
+            self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size, **kwargs),
+            self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size, **kwargs),
+            self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size, **kwargs),
+            self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size, **kwargs),
+            self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size, **kwargs)
+        ]
+
+        # self.predictor = EdgePredictor(layer_size, layer_size)
+        self.predictor = EdgePredictorFromEdges(in_channels=256, hidden_channels=128)  # ??? HELP HERE
         self.dtype = dtype
         self.device = next(self.parameters()).device  # get the device the model is currently on
         self.mps_fallback = mps_fallback
@@ -324,35 +372,46 @@ class Net(torch.nn.Module):
             print('[INFO] Falling back to CPU for conv layers.')
 
     def forward(self, data) -> tuple:
-        # 1
+
+        # Step 1 - Extract features from the image
+
         data.x = self.fextractor(data.detections)
-
         x, edge_index, edge_attr = data.x, data.edge_index, data.edge_attr
-
         del data
+
+        # Step 2 - Enter the Message Passing layers
 
         # Fallback to CPU if device is MPS
         if self.mps_fallback:
             x = x.to(torch.device('cpu'))
             edge_index = edge_index.to(torch.device('cpu'))
             edge_attr = edge_attr.to(torch.device('cpu'))
-            self.conv1.to('cpu')
-            self.conv2.to('cpu')
+            self.conv_in.to(torch.device('cpu'))
+            for layer in self.conv:
+                layer.to(torch.device('cpu'))
 
         # 2
-        for i in range(1, self.number_of_message_passing_layers + 1):
-            message_passing = " self.conv" + str(
-                i) + "(x=x, edge_index=edge_index.to(torch.int64), edge_attr=edge_attr)"
-            x, edge_attr = eval(message_passing)
+        # for i in range(1, self.number_of_message_passing_layers + 1):
+        #     message_passing = " self.conv" + str(
+        #         i) + "(x=x, edge_index=edge_index.to(torch.int64), edge_attr=edge_attr)"
+        #     x, edge_attr = eval(message_passing)
+
+        x, edge_attr = self.conv_in(x=x, edge_index=edge_index.to(torch.int64), edge_attr=edge_attr)
+
+        for i in range(self.number_of_message_passing_layers):
+            x, edge_attr = self.conv[i](x=x, edge_index=edge_index.to(torch.int64), edge_attr=edge_attr)
 
         # Back on MPS after the convolutions
         if self.mps_fallback:
             x = x.to(torch.device('mps'))
+            edge_attr = edge_attr.to(torch.device('mps'))
 
         # Use edge_index to find the corresponding node features in x
         x_i, x_j = x[edge_index[0].to(torch.int64)], x[edge_index[1].to(torch.int64)]
 
-        return self.predictor(x_i, x_j)  # , edge_attr
+        return self.predictor(edge_attr)
+
+        # return self.predictor(x_i, x_j)
 
     def __str__(self):
         return self.layer_type.lower() + "_" + str(self.layer_size) + "_" + self.backbone + "-backbone"

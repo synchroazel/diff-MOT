@@ -7,6 +7,7 @@ from torchvision.ops import sigmoid_focal_loss
 from model import Net
 from motclass import MotDataset
 from utilities import get_best_device, save_model
+from torch.nn import BCEWithLogitsLoss, BCELoss
 
 device = get_best_device()
 
@@ -25,14 +26,19 @@ def single_validate(model, val_loader, idx, loss_function, device):
         gt_edges = data.y  # Get the true edge labels
 
         # Check how many gt 1s have been predicted correctly
-
         gt_ones = gt_edges.nonzero()
-        acc_on_ones = torch.where(pred_edges[gt_ones] == 1.0, 1., 0.).mean()
+        acc_on_ones = torch.where(pred_edges[gt_ones] > 0.5, 1., 0.).mean()
 
-        # acc_on_ones = torch.mean(torch.eq(pred_edges.round(), gt_edges.nonzero()).tolist())
+        # Check how many gt 0s have been predicted correctly
+        gt_zeros = (gt_edges == 0).nonzero()
+        acc_on_zeros = torch.where(pred_edges[gt_zeros] < 0.5, 1., 0.).mean()
+
+        # Check how many gt values overall have been predicted correctly
+        rounded_pred_edges = torch.where(pred_edges > 0.5, 1., 0.)
+        acc_total = torch.where(rounded_pred_edges == gt_edges, 1., 0.).mean()
 
         loss = loss_function(pred_edges, gt_edges, reduction='sum', alpha=0.99, gamma=5)
-        return loss.item(), acc_on_ones
+        return loss.item(), acc_total, acc_on_ones, acc_on_zeros
 
 
 def train(model, train_loader, val_loader, loss_function, optimizer, epochs, device, mps_fallback=False):
@@ -41,13 +47,15 @@ def train(model, train_loader, val_loader, loss_function, optimizer, epochs, dev
 
     print('[INFO] Launching training...\n')
 
-    pbar_ep = tqdm(range(epochs), desc='[TQDM] Epoch #1 ', position=0, leave=False)
+    pbar_ep = tqdm(range(epochs), desc='[TQDM] Epoch #1 ', position=0, leave=False,
+                   bar_format="{desc:<5}{percentage:3.0f}%|{bar}{r_bar}")
 
     for epoch in pbar_ep:
 
         total_train_loss, total_val_loss = 0, 0
 
-        pbar_dl = tqdm(enumerate(train_loader), desc='[TQDM] Training on track 1/? ', total=train_loader.n_subtracks)
+        pbar_dl = tqdm(enumerate(train_loader), desc='[TQDM] Training on track 1/? ', total=train_loader.n_subtracks,
+                       bar_format="{desc:<5}{percentage:3.0f}%|{bar}{r_bar}")
 
         last_track_idx = 0
         i = 0
@@ -69,7 +77,7 @@ def train(model, train_loader, val_loader, loss_function, optimizer, epochs, dev
             pred_edges = model(data)  # Get the predicted edge labels
             gt_edges = data.y  # Get the true edge labels
 
-            train_loss = loss_function(pred_edges, gt_edges, reduction='sum', alpha=1 - 1/10, gamma=5)
+            train_loss = loss_function(pred_edges, gt_edges, reduction='sum', alpha=1 - 1 / 10, gamma=5)
 
             # Backward and optimize
             optimizer.zero_grad()
@@ -83,14 +91,14 @@ def train(model, train_loader, val_loader, loss_function, optimizer, epochs, dev
 
             """ Validation step """
 
-            val_loss, val_acc = single_validate(model, val_loader, i, loss_function, device)
+            val_loss, val_acc, val_acc_1, val_acc_0 = single_validate(model, val_loader, i, loss_function, device)
             total_val_loss += val_loss
 
             """ Update progress """
 
             avg_train_loss_msg = f'avg.Tr.Loss: {(total_train_loss / (i + 1)):.4f} (last: {train_loss:.4f})'
             avg_val_loss_msg = f'avg.Val.Loss: {(total_val_loss / (i + 1)):.4f} (last: {val_loss:.4f})'
-            last_val_acc = f'Val.Acc: {val_acc:.4f}'
+            last_val_acc = f'Val.Acc: {val_acc:.4f} (1s: {int(val_acc_1 * 100)}% | 0s: {int(val_acc_0 * 100)}%)'
 
             pbar_ep.set_description(
                 f'[TQDM] Epoch #{epoch + 1} - {avg_train_loss_msg} - {avg_val_loss_msg} | {last_val_acc}')
@@ -104,6 +112,7 @@ def train(model, train_loader, val_loader, loss_function, optimizer, epochs, dev
 
 # Paths
 mot_path = 'data'
+# mot_path = '/media/dmmp/vid+backup/Data'
 
 # MOT to use
 mot_train = 'MOT17'
@@ -120,10 +129,12 @@ slide = 15
 linkage_window = -1
 l_size = 256
 epochs = 1
+heads = 1
 learning_rate = 0.0001
 
 # Only if using MPS
 mps_fallback = True
+# mps_fallback = False
 
 # %% Initialize the model
 
@@ -133,14 +144,16 @@ model = Net(backbone=backbone,
             dtype=dtype,
             mps_fallback=True if device == torch.device('mps') else False,
             in_edge_channels=2,
-            heads=6,
+            heads=heads,
             concat=False,
             dropout=0.3,
             add_self_loops=False
             )
 
-# loss_function = torch.nn.BCEWithLogitsLoss() # TODO: look at focal loss to deal with the imbalance
+# loss_function = torch.nn.BCEWithLogitsLoss()
 loss_function = sigmoid_focal_loss
+# loss_function = BCELoss()
+
 optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
 
 # %% Set up the dataloader
@@ -158,8 +171,7 @@ mot_train_dl = MotDataset(dataset_path=train_dataset_path,
                           dl_mode=True,
                           device=device,
                           dtype=dtype,
-                          mps_fallback=mps_fallback,
-                          black_and_white_features=False)
+                          mps_fallback=mps_fallback)
 
 mot_val_dl = MotDataset(dataset_path=val_dataset_path,
                         split='train',
@@ -171,8 +183,7 @@ mot_val_dl = MotDataset(dataset_path=val_dataset_path,
                         dl_mode=True,
                         device=device,
                         dtype=dtype,
-                        mps_fallback=mps_fallback,
-                        black_and_white_features=False)
+                        mps_fallback=mps_fallback)
 
 # %% Train the model
 

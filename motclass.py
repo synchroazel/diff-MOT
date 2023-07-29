@@ -65,10 +65,10 @@ def build_graph(adjacency_list: torch.Tensor,
     detections = detections.to(dtype)
     number_of_nodes = len(detections)
 
-    # for distance calculation
+    # For distance calculation
     detections_coords = box_convert(torch.clone(detections_coords).detach(), "xyxy", "cxcywh")
 
-    # assigned to data.pos, used for knn
+    # Assigned to data.pos, used for knn
     # position_matrix = torch.zeros((detections_coords.shape[0], 2))
     position_matrix = detections_coords[:, (0, 1)]
 
@@ -76,10 +76,6 @@ def build_graph(adjacency_list: torch.Tensor,
     # detections_coords = detections_coords[:, (0, 1)] / 1000
 
     # detections_dist = torch.cdist(detections_coords.to(torch.float32), detections_coords.to(torch.float32)).to(dtype)
-
-    # torch.cdist is not currently implemented on MPS - fallback to cpu in case of MPS device
-    # if device == torch.device("mps"):
-    #     detections_coords = detections_coords.float().cpu()
 
     # Prepare for pyg_data.Data
     adjacency_list = adjacency_list.t().contiguous()
@@ -110,51 +106,52 @@ def build_graph(adjacency_list: torch.Tensor,
 
     edge_attributes = torch.zeros(graph.edge_index.shape[1], 2)
 
-    # TODO: SUSHI metrics
-    ## # once the graph is pruned, compute edge attributes
-    ## edge_attributes = torch.zeros(graph.edge_index.shape[1], 7).to(device)
-    ## # obtain info for each edge
-    ## x = list()
-    ## y = list()
-    ## h = list()
-    ## w = list()
-    ## t = list()
-    ## GIoU = list()
-    ## Gboxes = box_convert(detections_coords, "cxcywh", "xyxy")
-    ## for egde in graph.edge_index.t():
-    ##     x.append(
-    ##         ((2*(detections_coords[egde[0],0] - detections_coords[egde[1],0])) /
-    ##         (detections_coords[egde[0],2] + detections_coords[egde[1],2])).item()
-    ##     )
-    ##     y.append(
-    ##         ((2 * (detections_coords[egde[0], 1] - detections_coords[egde[1], 1])) /
-    ##         (detections_coords[egde[0],3] + detections_coords[egde[1], 3])).item()
-    ##     )
-    ##     h.append(torch.log(detections_coords[egde[0],2] / detections_coords[egde[1],2]).item())
-    ##     w.append(torch.log(detections_coords[egde[0],3] / detections_coords[egde[1],3]).item())
-    ##     t.append((frame_times[egde[1]] - frame_times[egde[0]]).item() / frame_times[-1])
-    ##     GIoU.append(
-    ##         generalized_box_iou(
-    ##             boxes1=Gboxes[egde[0],:].unsqueeze(0),
-    ##             boxes2=Gboxes[egde[1],:].unsqueeze(0)
-    ##         ).item()
-    ##     )
-    ##
-    ## # position information
-    ## edge_attributes[:,0] = torch.tensor(x)
-    ## edge_attributes[:,1] = torch.tensor(y)
-    ## edge_attributes[:, 2] = torch.tensor(h)
-    ## edge_attributes[:, 3] = torch.tensor(w)
-    ## # Time information
-    ## edge_attributes[:, 4] = torch.tensor(t)
-    ##
-    ## # Appearance information
-    ##
-    ##
-    ## # Motion consistency information
-    ## edge_attributes[:,6] = torch.tensor(GIoU)
+    # TODO: SUSHI attributes
+    # # once the graph is pruned, compute edge attributes
+    # edge_attributes = torch.zeros(graph.edge_index.shape[1], 7).to(device)
+    # # obtain info for each edge
+    # x = list()
+    # y = list()
+    # h = list()
+    # w = list()
+    # t = list()
+    # GIoU = list()
+    # Gboxes = box_convert(detections_coords, "cxcywh", "xyxy")
+    # for egde in graph.edge_index.t():
+    #     x.append(
+    #         ((2*(detections_coords[egde[0],0] - detections_coords[egde[1],0])) /
+    #         (detections_coords[egde[0],2] + detections_coords[egde[1],2])).item()
+    #     )
+    #     y.append(
+    #         ((2 * (detections_coords[egde[0], 1] - detections_coords[egde[1], 1])) /
+    #         (detections_coords[egde[0],3] + detections_coords[egde[1], 3])).item()
+    #     )
+    #     h.append(torch.log(detections_coords[egde[0],2] / detections_coords[egde[1],2]).item())
+    #     w.append(torch.log(detections_coords[egde[0],3] / detections_coords[egde[1],3]).item())
+    #     t.append((frame_times[egde[1]] - frame_times[egde[0]]).item() / frame_times[-1])
+    #     GIoU.append(
+    #         generalized_box_iou(
+    #             boxes1=Gboxes[egde[0],:].unsqueeze(0),
+    #             boxes2=Gboxes[egde[1],:].unsqueeze(0)
+    #         ).item()
+    #     )
+    #
+    # # position information
+    # edge_attributes[:,0] = torch.tensor(x)
+    # edge_attributes[:,1] = torch.tensor(y)
+    # edge_attributes[:, 2] = torch.tensor(h)
+    # edge_attributes[:, 3] = torch.tensor(w)
+    # # Time information
+    # edge_attributes[:, 4] = torch.tensor(t)
+    #
+    # # Appearance information
+    #
+    #
+    # # Motion consistency information
+    # edge_attributes[:,6] = torch.tensor(GIoU)
 
-    # our metrics
+    """ Our edge attributes """
+
     edge_attributes = torch.zeros(graph.edge_index.shape[1], 2).to(device)
 
     # Those 2 are calculated here because knn_morpher does not update them
@@ -170,7 +167,7 @@ def build_graph(adjacency_list: torch.Tensor,
 
     detections_dist = torch.cdist(frame_times.to(dtype),
                                   frame_times.to(dtype), p=2).to('cpu')
-    ##
+
     # Create a 1D Tensor with the distances of the detections ordered as the edges in the adj list
     edge_attributes[:, 1] = detections_dist[a, b]
 
@@ -179,7 +176,7 @@ def build_graph(adjacency_list: torch.Tensor,
     del a
     del b
 
-    edge_attributes = 1 / (edge_attributes.to(device) + 0.00001)
+    # edge_attributes = 1 / (edge_attributes.to(device) + 0.00001)
     graph.edge_attr = edge_attributes
 
     # Build `y` tensor to compare predictions with gt
@@ -194,7 +191,7 @@ def build_graph(adjacency_list: torch.Tensor,
 
     # if edge_pruning[0]:
     #     distances = torch.cdist(position_matrix, position_matrix, p=2) + 1e-5
-    #     # todo: toggle for edge or knn
+    #     # TODO: toggle for edge or knn
     #     pruned_mask = [False if x[0] < (1 / edge_pruning[1]) * x[1] else True for x in distances]
     #     adjacency_list = adjacency_list[:, pruned_mask]
     #     del distances
@@ -215,8 +212,7 @@ class MotTrack:
                  dtype: torch.dtype = torch.float32,
                  logging_lv: int = logging.INFO,
                  name: str = "track",
-                 black_and_white_features=False,
-                 pruning: int = 1):
+                 black_and_white_features=False):
 
         # Set logging level
         logging.getLogger().setLevel(logging_lv)
@@ -242,6 +238,8 @@ class MotTrack:
                             f"Setting `linkage window` to {self.n_frames}")
             self.linkage_window = self.n_frames
 
+    # # OLD __str__ method:
+    #
     # def __str__(self):
     #
     #     name = self.name
