@@ -14,6 +14,18 @@ from torch_geometric.utils import add_self_loops, degree, softmax
 from torchvision import models
 from torch_geometric.nn.inits import glorot
 from torch_geometric.typing import Adj, Optional, OptPairTensor, OptTensor, Size
+from torch_scatter import (
+    scatter_sum,
+    scatter_add,
+    scatter_mul,
+    scatter_mean,
+    scatter_min,
+    scatter_max,
+    scatter_std,
+    scatter_logsumexp,
+    scatter_softmax,
+    scatter_log_softmax
+)
 
 
 # TODO: capire come gestire la variabilità dei layers
@@ -64,7 +76,7 @@ class EdgePredictorFromEdges(torch.nn.Module):
         x = F.relu(self.lin1(edge_attr))
         x = F.dropout(x, training=self.training)
         x = self.lin2(x)
-        x = torch.sigmoid(x)  # CLARIFY SIGMOID THING
+        # x = torch.sigmoid(x)  # CLARIFY SIGMOID THING
         x = x.squeeze()
         return x
 
@@ -171,6 +183,121 @@ class TransformerConvWithEdgeUpdate(torch_geometric.nn.TransformerConv):
             edge_features = self.__edge_attr__
             self.__edge_attr__ = None
             return out, edge_features
+
+
+class EdgeModel(torch.nn.Module):
+    def __init__(self, n_features, n_edge_features, hiddens, n_targets, residuals):
+        super().__init__()
+        self.residuals = residuals
+        self.edge_mlp = nn.Sequential(
+            nn.Linear(2 * n_features + n_edge_features, hiddens),
+            nn.ReLU(),
+            nn.Linear(hiddens, n_targets),
+        )
+
+    def forward(self, src, dest, edge_attr, u=None, batch=None):
+        out = torch.cat([src, dest, edge_attr], 1)
+        out = self.edge_mlp(out)
+        if self.residuals:
+            out = out + edge_attr
+        return out
+
+
+class TimeAwareNodeModel(torch.nn.Module):
+    def __init__(self, n_features, n_edge_features, hiddens, n_targets, residuals, agg_future, agg_past):
+        super(TimeAwareNodeModel, self).__init__()
+        self.residuals = residuals
+        self.node_mlp_future = nn.Sequential(
+            nn.Linear(n_features + n_edge_features, hiddens),
+            nn.ReLU(),
+            nn.Linear(hiddens, n_targets),
+        )
+        self.node_mlp_past = nn.Sequential(
+            nn.Linear(hiddens + n_features, hiddens),
+            nn.ReLU(),
+            nn.Linear(hiddens, n_targets),
+        )
+        self.node_mlp_combine = nn.Sequential(
+            nn.Linear(n_targets * 2, hiddens),
+            nn.ReLU(),
+            nn.Linear(hiddens, n_targets),
+        )
+
+        self.agg_future = agg_future
+        self.agg_past = agg_past
+        self.agg_function = {
+            'sum': scatter_sum,
+            'add': scatter_add,
+            'mul': scatter_mul,
+            'mean': scatter_mean,
+            'min': scatter_min,
+            'max': scatter_max,
+            'std': scatter_std,
+            'logsumexp': scatter_logsumexp,
+            'softmax': scatter_softmax,
+            'log_softmax': scatter_log_softmax,
+        }
+
+    def forward(self, x, edge_index, edge_attr, u, batch):
+        n1, n2 = edge_index
+
+        future_mask = n1 < n2
+        future_n1, future_n2 = n1[future_mask], n2[future_mask]
+        future_in = torch.cat([x[future_n2], edge_attr[future_mask]], dim=1)
+        future_out = self.node_mlp_future(future_in)
+        future_out = self.agg_function[self.agg_future](future_out, future_n1, dim=0, dim_size=x.size(0))
+
+        past_mask = n1 > n2
+        past_n1, past_n2 = n1[past_mask], n2[past_mask]
+        past_in = torch.cat([x[past_n2], edge_attr[past_mask]], dim=1)
+        past_out = self.node_mlp_past(past_in)
+        past_out = self.agg_function[self.agg_past](past_out, past_n1, dim=0, dim_size=x.size(0))
+
+        flow = torch.cat((past_out, future_out), dim=1)
+
+        out = self.node_mlp_combine(flow)
+
+        if self.residuals:
+            out = out + x
+        return out
+
+        # n1, n2 = edge_index
+        # past_mask = n1 > n2
+        # future_mask = n1 < n2
+        #
+        # # FUTURE edge update
+        #
+        # out_past = torch.cat([x[n1], edge_attr], dim=1)
+        # out_past = self.node_mlp_1_future(out_past)
+        # out_past = scatter_mean(out_past, n2, dim=0, dim_size=x.size(0))
+        # out_past = torch.cat([x, out_past], dim=1)
+        # # out = self.node_mlp_2(out)
+        #
+        # # PAST edge update
+        #
+        # out_future = torch.cat([x[n1], edge_attr], dim=1)
+        # out_future = self.node_mlp_1_past(out_future)
+        # out_future = scatter_add(out_future, n2, dim=0, dim_size=x.size(0))
+        # out_future = torch.cat([x, out_future], dim=1)
+        # # out = self.node_mlp_2p(out)
+        #
+        # out = torch.cat([out_past, out_future], dim=1)
+        #
+        # out = self.node_mlp_2(out)
+        #
+        # if self.residuals:
+        #     out = out + x
+        # return out
+
+
+def build_custom_mp(n_target_nodes, n_target_edges, n_features, n_edge_features, layer_size, residuals):
+    return torch_geometric.nn.MetaLayer(
+        edge_model=EdgeModel(n_features=n_features, n_edge_features=n_edge_features, hiddens=layer_size,
+                             n_targets=n_target_edges, residuals=residuals),
+        node_model=TimeAwareNodeModel(n_features=n_features, n_edge_features=n_target_edges, hiddens=layer_size,
+                                      n_targets=n_target_nodes, residuals=residuals,
+                                      agg_future='sum', agg_past='mean')
+    )
 
 
 class GeneralConvWithEdgeUpdate(torch_geometric.nn.MessagePassing):
@@ -331,7 +458,9 @@ class Net(torch.nn.Module):
         self.layer_size = layer_size
         self.backbone = backbone
 
-        self.conv_in = self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size, **kwargs)
+        # self.conv_in = self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size, **kwargs)
+        self.conv_in = build_custom_mp(n_target_nodes=256, n_target_edges=256, n_features=2048, n_edge_features=2,
+                                       layer_size=256, residuals=False)
 
         kwargs['edge_dim'] = layer_size
         kwargs['in_edge_channels'] = layer_size * kwargs['heads']
@@ -343,20 +472,18 @@ class Net(torch.nn.Module):
 
         self.number_of_message_passing_layers = steps
 
-        # if steps <= 10:
-        #     self.number_of_message_passing_layers = steps
-        # else:
-        #     logging.warning("Max number of message passing layers implemented is 10. Falling back to 10.")
-        #     self.number_of_message_passing_layers = 10
-
         self.conv = []
         for i in range(steps - 1):
-            self.conv.append(self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size, **kwargs))
+            # self.conv.append(self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size, **kwargs))
+            self.conv.append(
+                build_custom_mp(n_target_nodes=256, n_target_edges=256, n_features=256, n_edge_features=256,
+                                layer_size=256, residuals=False)
+            )
 
         # self.predictor = EdgePredictor(layer_size, layer_size)
         self.predictor = EdgePredictorFromEdges(in_channels=256, hidden_channels=128)  # ??? HELP HERE
         self.dtype = dtype
-        self.device = device # get the device the model is currently on
+        self.device = device  # get the device the model is currently on
         self.mps_fallback = mps_fallback
         self.to(dtype=dtype)
 
@@ -389,10 +516,10 @@ class Net(torch.nn.Module):
         #         i) + "(x=x, edge_index=edge_index.to(torch.int64), edge_attr=edge_attr)"
         #     x, edge_attr = eval(message_passing)
 
-        x, edge_attr = self.conv_in(x=x, edge_index=edge_index.to(torch.int64), edge_attr=edge_attr)
+        x, edge_attr, _ = self.conv_in(x=x, edge_index=edge_index.to(torch.int64), edge_attr=edge_attr)
 
-        for i in range(self.number_of_message_passing_layers):
-            x, edge_attr = self.conv[i](x=x, edge_index=edge_index.to(torch.int64), edge_attr=edge_attr)
+        for i in range(self.number_of_message_passing_layers - 1):
+            x, edge_attr, _ = self.conv[i](x=x, edge_index=edge_index.to(torch.int64), edge_attr=edge_attr)
 
         # Back on MPS after the convolutions
         if self.mps_fallback:

@@ -37,7 +37,8 @@ def single_validate(model, val_loader, idx, loss_function, device):
         rounded_pred_edges = torch.where(pred_edges > 0.5, 1., 0.)
         acc_total = torch.where(rounded_pred_edges == gt_edges, 1., 0.).mean()
 
-        loss = loss_function(pred_edges, gt_edges, reduction='sum', alpha=0.99, gamma=5)
+        loss = loss_function(pred_edges, gt_edges, reduction='sum', alpha=0.9, gamma=5)
+
         return loss.item(), acc_total, acc_on_ones, acc_on_zeros
 
 
@@ -77,7 +78,7 @@ def train(model, train_loader, val_loader, loss_function, optimizer, epochs, dev
             pred_edges = model(data)  # Get the predicted edge labels
             gt_edges = data.y  # Get the true edge labels
 
-            train_loss = loss_function(pred_edges, gt_edges, reduction='sum', alpha=1 - 1 / 10, gamma=5)
+            train_loss = loss_function(pred_edges, gt_edges, reduction='sum', alpha=0.9, gamma=5)
 
             # Backward and optimize
             optimizer.zero_grad()
@@ -111,8 +112,8 @@ def train(model, train_loader, val_loader, loss_function, optimizer, epochs, dev
 # %% Set up parameters
 
 # Paths
-# mot_path = 'data'
-mot_path = '/media/dmmp/vid+backup/Data'
+mot_path = 'data'
+# mot_path = '/media/dmmp/vid+backup/Data'
 
 # MOT to use
 mot_train = 'MOT17'
@@ -127,14 +128,14 @@ layer_type = 'GeneralConv'
 subtrack_len = 15
 slide = 15
 linkage_window = -1
-l_size = 256
+l_size = 4098
 epochs = 1
 heads = 1
 learning_rate = 0.0001
 
 # Only if using MPS
-# mps_fallback = True
-mps_fallback = False
+mps_fallback = True
+# mps_fallback = False
 
 # %% Initialize the model
 
@@ -154,7 +155,6 @@ model = Net(backbone=backbone,
 
 # loss_function = torch.nn.BCEWithLogitsLoss()
 loss_function = sigmoid_focal_loss
-# loss_function = BCELoss()
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
 

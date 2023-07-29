@@ -360,7 +360,7 @@ class MotTrack:
                 for j in current_frame_nodes_indices:
                     for l in future_frame_nodes_indices:
                         adjacency_list.append([j, l])
-                        adjacency_list.append([l, j])
+                        adjacency_list.append([l, j]) # ----------------------------------------------------------------
 
         adjacency_list = torch.tensor(adjacency_list).to(torch.int16).to(self.device)
 
@@ -438,7 +438,7 @@ class MotTrack:
             for path in all_paths:
                 for i in range(len(path) - 1):
                     gt_adjacency_list.append([path[i], path[i + 1]])
-                    gt_adjacency_list.append([path[i + 1], path[i]])
+                    gt_adjacency_list.append([path[i + 1], path[i]]) # -------------------------------------------------
 
             # Prepare the edge index tensor for pytorch geometric
             gt_adjacency_list = torch.tensor(gt_adjacency_list).to(torch.int16).to(self.device)
