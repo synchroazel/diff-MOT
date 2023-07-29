@@ -190,6 +190,7 @@ class GeneralConvWithEdgeUpdate(torch_geometric.nn.MessagePassing):
             attention_type: str = "additive",
             l2_normalize: bool = False,
             bias: bool = True,
+            device="cuda",
             **kwargs,
     ):
         kwargs.setdefault('aggr', aggr)
@@ -211,12 +212,12 @@ class GeneralConvWithEdgeUpdate(torch_geometric.nn.MessagePassing):
 
         if self.directed_msg:
             self.lin_msg = Linear(in_channels[0], out_channels * self.heads,
-                                  bias=bias)
+                                  bias=bias).to(device)
         else:
             self.lin_msg = Linear(in_channels[0], out_channels * self.heads,
-                                  bias=bias)
+                                  bias=bias).to(device)
             self.lin_msg_i = Linear(in_channels[0], out_channels * self.heads,
-                                    bias=bias)
+                                    bias=bias).to(device)
 
         if self.skip_linear or self.in_channels != self.out_channels:
             self.lin_self = Linear(in_channels[1], out_channels, bias=bias)
@@ -322,6 +323,7 @@ class Net(torch.nn.Module):
                  layer_tipe='GeneralConv',
                  dtype=torch.float32,
                  mps_fallback=False,
+                 device='cuda:0',
                  **kwargs):
         super(Net, self).__init__()
         self.fextractor = ImgEncoder(backbone, dtype=dtype)
@@ -341,29 +343,20 @@ class Net(torch.nn.Module):
 
         self.number_of_message_passing_layers = steps
 
-        if steps <= 10:
-            self.number_of_message_passing_layers = steps
-        else:
-            logging.warning("Max number of message passing layers implemented is 10. Falling back to 10.")
-            self.number_of_message_passing_layers = 10
+        # if steps <= 10:
+        #     self.number_of_message_passing_layers = steps
+        # else:
+        #     logging.warning("Max number of message passing layers implemented is 10. Falling back to 10.")
+        #     self.number_of_message_passing_layers = 10
 
-        self.conv = [
-            self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size, **kwargs),
-            self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size, **kwargs),
-            self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size, **kwargs),
-            self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size, **kwargs),
-            self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size, **kwargs),
-            self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size, **kwargs),
-            self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size, **kwargs),
-            self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size, **kwargs),
-            self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size, **kwargs),
-            self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size, **kwargs)
-        ]
+        self.conv = []
+        for i in range(steps - 1):
+            self.conv.append(self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size, **kwargs))
 
         # self.predictor = EdgePredictor(layer_size, layer_size)
         self.predictor = EdgePredictorFromEdges(in_channels=256, hidden_channels=128)  # ??? HELP HERE
         self.dtype = dtype
-        self.device = next(self.parameters()).device  # get the device the model is currently on
+        self.device = device # get the device the model is currently on
         self.mps_fallback = mps_fallback
         self.to(dtype=dtype)
 

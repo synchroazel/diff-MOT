@@ -98,7 +98,7 @@ def build_graph(adjacency_list: torch.Tensor,
         if mps_fallback:
             graph = graph.to('cpu')
 
-        knn_morpher = KNNGraph(**knn_pruning_args, loop=False, force_undirected=True)
+        knn_morpher = KNNGraph(loop=False, force_undirected=True, **knn_pruning_args)
         graph = knn_morpher(graph)
 
         if mps_fallback:
@@ -508,7 +508,9 @@ class MotDataset(Dataset):
         if naive_pruning_args is None:
             self.naive_pruning_args = None  # {"dist": 20}
         if knn_pruning_args is None:
-            self.knn_pruning_args = {"k": 5, "cosine": False}
+            self.knn_pruning_args = {"k": 10, "cosine": False}
+        else:
+            self.knn_pruning_args = knn_pruning_args
 
         # Get tracklist from the split specified
         assert split in os.listdir(self.dataset_dir), \
@@ -616,11 +618,12 @@ class MotDataset(Dataset):
                          name=self.name + "/track_" + str(self.tracklist[cur_track]) + "/subtrack_" + str(idx))
 
         if self.dl_mode:
-            return build_graph(**track.get_data(),
-                               mps_fallback=self.mps_fallback,
-                               device=self.device,
-                               dtype=self.dtype,
-                               naive_pruning_args=self.naive_pruning_args,
-                               knn_pruning_args=self.knn_pruning_args)
+            return build_graph(
+                mps_fallback=self.mps_fallback,
+                device=self.device,
+                dtype=self.dtype,
+                naive_pruning_args=self.naive_pruning_args,
+                knn_pruning_args=self.knn_pruning_args,
+                **track.get_data())
         else:
             return track

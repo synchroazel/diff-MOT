@@ -111,8 +111,8 @@ def train(model, train_loader, val_loader, loss_function, optimizer, epochs, dev
 # %% Set up parameters
 
 # Paths
-mot_path = 'data'
-# mot_path = '/media/dmmp/vid+backup/Data'
+# mot_path = 'data'
+mot_path = '/media/dmmp/vid+backup/Data'
 
 # MOT to use
 mot_train = 'MOT17'
@@ -133,8 +133,8 @@ heads = 1
 learning_rate = 0.0001
 
 # Only if using MPS
-mps_fallback = True
-# mps_fallback = False
+# mps_fallback = True
+mps_fallback = False
 
 # %% Initialize the model
 
@@ -147,7 +147,9 @@ model = Net(backbone=backbone,
             heads=heads,
             concat=False,
             dropout=0.3,
-            add_self_loops=False
+            add_self_loops=False,
+            steps=6,
+            device=device
             )
 
 # loss_function = torch.nn.BCEWithLogitsLoss()
