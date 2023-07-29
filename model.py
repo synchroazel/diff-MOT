@@ -213,7 +213,7 @@ class TimeAwareNodeModel(torch.nn.Module):
             nn.Linear(hiddens, n_targets),
         )
         self.node_mlp_past = nn.Sequential(
-            nn.Linear(hiddens + n_features, hiddens),
+            nn.Linear(n_features + n_edge_features, hiddens),
             nn.ReLU(),
             nn.Linear(hiddens, n_targets),
         )
@@ -458,7 +458,7 @@ class Net(torch.nn.Module):
             )
 
         # self.predictor = EdgePredictor(layer_size, layer_size)
-        self.predictor = EdgePredictorFromEdges(in_channels=256, hidden_channels=128)  # ??? HELP HERE
+        self.predictor = EdgePredictorFromEdges(in_channels=n_target_edges, hidden_channels=128)  # ??? HELP HERE
         self.dtype = dtype
         self.device = device  # get the device the model is currently on
         self.mps_fallback = mps_fallback

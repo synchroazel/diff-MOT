@@ -182,13 +182,14 @@ def build_graph(adjacency_list: torch.Tensor,
     # Build `y` tensor to compare predictions with gt
     if gt_adjacency_list is not None:
         gt_adjacency_set = set([tuple(x) for x in gt_adjacency_list.t().tolist()])
+        # assert no ground truth has been lost
+        test_list = graph.edge_index.t().tolist()
+        test = [list(a) in test_list for a in gt_adjacency_set]
+        assert all(a is True for a in test)
+        del test, test_list
         y = torch.tensor([1 if tuple(x) in gt_adjacency_set else 0 for x in graph.edge_index.t().tolist()]).to(dtype)
         graph.y = y
 
-    # # Naive edge pruning - distance of 20 pixel per time
-    # if naive_pruning_args is not None:
-    #     pruned_mask = [False if x[0] < (1 / naive_pruning_args['dist']) * x[1] else True for x in edge_attributes]
-    #     graph.edge_index = adjacency_list[:, pruned_mask]
 
     return graph
 

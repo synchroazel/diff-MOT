@@ -128,10 +128,14 @@ layer_type = 'GeneralConv'
 subtrack_len = 15
 slide = 15
 linkage_window = 5
-l_size = 256
+l_size = 1000
 epochs = 1
 heads = 1
 learning_rate = 0.0001
+knn_dict = {
+    'k':20,
+    'cosine':False
+}
 
 # Only if using MPS
 # mps_fallback = True
@@ -149,7 +153,7 @@ model = Net(backbone=backbone,
             concat=False,
             dropout=0.3,
             add_self_loops=False,
-            steps=6,
+            steps=5,
             device=device
             )
 
@@ -171,6 +175,7 @@ mot_train_dl = MotDataset(dataset_path=train_dataset_path,
                           detections_file_folder='gt',
                           detections_file_name='gt.txt',
                           dl_mode=True,
+                          knn_pruning_args=knn_dict,
                           device=device,
                           dtype=dtype,
                           mps_fallback=mps_fallback)
@@ -182,6 +187,7 @@ mot_val_dl = MotDataset(dataset_path=val_dataset_path,
                         linkage_window=linkage_window,
                         detections_file_folder='gt',
                         detections_file_name='gt.txt',
+                        knn_pruning_args=knn_dict,
                         dl_mode=True,
                         device=device,
                         dtype=dtype,
