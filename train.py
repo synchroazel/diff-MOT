@@ -112,8 +112,8 @@ def train(model, train_loader, val_loader, loss_function, optimizer, epochs, dev
 # %% Set up parameters
 
 # Paths
-mot_path = 'data'
-# mot_path = '/media/dmmp/vid+backup/Data'
+# mot_path = 'data'
+mot_path = '/media/dmmp/vid+backup/Data'
 
 # MOT to use
 mot_train = 'MOT17'
@@ -127,20 +127,20 @@ backbone = 'resnet50'
 layer_type = 'GeneralConv'
 subtrack_len = 15
 slide = 15
-linkage_window = -1
-l_size = 4098
+linkage_window = 5
+l_size = 256
 epochs = 1
 heads = 1
 learning_rate = 0.0001
 
 # Only if using MPS
-mps_fallback = True
-# mps_fallback = False
+# mps_fallback = True
+mps_fallback = False
 
 # %% Initialize the model
 
 model = Net(backbone=backbone,
-            layer_tipe=layer_type,
+            # layer_tipe=layer_type,
             layer_size=l_size,
             dtype=dtype,
             mps_fallback=True if device == torch.device('mps') else False,

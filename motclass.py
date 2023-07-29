@@ -180,21 +180,15 @@ def build_graph(adjacency_list: torch.Tensor,
     graph.edge_attr = edge_attributes
 
     # Build `y` tensor to compare predictions with gt
-    gt_adjacency_set = set([tuple(x) for x in gt_adjacency_list.t().tolist()])
-    y = torch.tensor([1 if tuple(x) in gt_adjacency_set else 0 for x in graph.edge_index.t().tolist()]).to(dtype)
-    graph.y = y
+    if gt_adjacency_list is not None:
+        gt_adjacency_set = set([tuple(x) for x in gt_adjacency_list.t().tolist()])
+        y = torch.tensor([1 if tuple(x) in gt_adjacency_set else 0 for x in graph.edge_index.t().tolist()]).to(dtype)
+        graph.y = y
 
-    # Naive edge pruning - distance of 20 pixel per time
-    if naive_pruning_args is not None:
-        pruned_mask = [False if x[0] < (1 / naive_pruning_args['dist']) * x[1] else True for x in edge_attributes]
-        graph.edge_index = adjacency_list[:, pruned_mask]
-
-    # if edge_pruning[0]:
-    #     distances = torch.cdist(position_matrix, position_matrix, p=2) + 1e-5
-    #     # TODO: toggle for edge or knn
-    #     pruned_mask = [False if x[0] < (1 / edge_pruning[1]) * x[1] else True for x in distances]
-    #     adjacency_list = adjacency_list[:, pruned_mask]
-    #     del distances
+    # # Naive edge pruning - distance of 20 pixel per time
+    # if naive_pruning_args is not None:
+    #     pruned_mask = [False if x[0] < (1 / naive_pruning_args['dist']) * x[1] else True for x in edge_attributes]
+    #     graph.edge_index = adjacency_list[:, pruned_mask]
 
     return graph
 

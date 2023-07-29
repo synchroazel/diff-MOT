@@ -92,8 +92,8 @@ class EdgePredictorFromNodes(torch.nn.Module):
         x = torch.cat([x_i, x_j], dim=-1)  # Concatenate node features.
         x = F.relu(self.lin1(x))
         x = F.dropout(x, training=self.training)
-        x = self.lin2(x)  # .squeeze()
-        x = torch.sigmoid(x).squeeze()
+        x = self.lin2(x).squeeze()
+        # x = torch.sigmoid(x).squeeze()
         return x
 
 
@@ -261,43 +261,15 @@ class TimeAwareNodeModel(torch.nn.Module):
             out = out + x
         return out
 
-        # n1, n2 = edge_index
-        # past_mask = n1 > n2
-        # future_mask = n1 < n2
-        #
-        # # FUTURE edge update
-        #
-        # out_past = torch.cat([x[n1], edge_attr], dim=1)
-        # out_past = self.node_mlp_1_future(out_past)
-        # out_past = scatter_mean(out_past, n2, dim=0, dim_size=x.size(0))
-        # out_past = torch.cat([x, out_past], dim=1)
-        # # out = self.node_mlp_2(out)
-        #
-        # # PAST edge update
-        #
-        # out_future = torch.cat([x[n1], edge_attr], dim=1)
-        # out_future = self.node_mlp_1_past(out_future)
-        # out_future = scatter_add(out_future, n2, dim=0, dim_size=x.size(0))
-        # out_future = torch.cat([x, out_future], dim=1)
-        # # out = self.node_mlp_2p(out)
-        #
-        # out = torch.cat([out_past, out_future], dim=1)
-        #
-        # out = self.node_mlp_2(out)
-        #
-        # if self.residuals:
-        #     out = out + x
-        # return out
 
-
-def build_custom_mp(n_target_nodes, n_target_edges, n_features, n_edge_features, layer_size, residuals):
+def build_custom_mp(n_target_nodes, n_target_edges, n_features, n_edge_features, layer_size, residuals, device="cuda"):
     return torch_geometric.nn.MetaLayer(
         edge_model=EdgeModel(n_features=n_features, n_edge_features=n_edge_features, hiddens=layer_size,
                              n_targets=n_target_edges, residuals=residuals),
         node_model=TimeAwareNodeModel(n_features=n_features, n_edge_features=n_target_edges, hiddens=layer_size,
                                       n_targets=n_target_nodes, residuals=residuals,
                                       agg_future='sum', agg_past='mean')
-    )
+    ).to(device=device)
 
 
 class GeneralConvWithEdgeUpdate(torch_geometric.nn.MessagePassing):
@@ -445,9 +417,13 @@ class Net(torch.nn.Module):
 
     def __init__(self,
                  backbone,
-                 layer_size,
+                 layer_size=256,
+                 n_target_nodes=256,
+                 n_target_edges=256,
                  steps=2,
-                 layer_tipe='GeneralConv',
+                 edge_features_dim=2,
+                 residuals=True,
+                 layer_tipe='TimeAware',
                  dtype=torch.float32,
                  mps_fallback=False,
                  device='cuda:0',
@@ -459,8 +435,9 @@ class Net(torch.nn.Module):
         self.backbone = backbone
 
         # self.conv_in = self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size, **kwargs)
-        self.conv_in = build_custom_mp(n_target_nodes=256, n_target_edges=256, n_features=2048, n_edge_features=2,
-                                       layer_size=256, residuals=False)
+        # tODO: n_features
+        self.conv_in = build_custom_mp(n_target_nodes=n_target_nodes, n_target_edges=n_target_edges, n_features=2048, n_edge_features=edge_features_dim,
+                                       layer_size=layer_size, residuals=False, device=device)
 
         kwargs['edge_dim'] = layer_size
         kwargs['in_edge_channels'] = layer_size * kwargs['heads']
@@ -476,8 +453,8 @@ class Net(torch.nn.Module):
         for i in range(steps - 1):
             # self.conv.append(self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size, **kwargs))
             self.conv.append(
-                build_custom_mp(n_target_nodes=256, n_target_edges=256, n_features=256, n_edge_features=256,
-                                layer_size=256, residuals=False)
+                build_custom_mp(n_target_nodes=n_target_nodes, n_target_edges=n_target_edges, n_features=n_target_nodes, n_edge_features=n_target_edges,
+                                       layer_size=layer_size, residuals=residuals, device=device)
             )
 
         # self.predictor = EdgePredictor(layer_size, layer_size)
