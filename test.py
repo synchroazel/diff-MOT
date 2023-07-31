@@ -56,12 +56,12 @@ def test(model, val_loader, loss_function, output_file_folder="outcomes", device
 # %% Set up parameters
 
 # Paths
-mot_path = 'data'
-# mot_path = '/media/dmmp/vid+backup/Data'
+# mot_path = 'data'
+mot_path = '/media/dmmp/vid+backup/Data'
 saves_path = 'saves/models'
 
 # Model to load
-model_pkl = 'transformerconv_256_resnet50-backbone.pkl'
+model_pkl = 'timeaware_256_resnet50-backbone.pkl'
 
 # MOT to use
 mot = 'MOT20'
@@ -80,7 +80,8 @@ epochs = 1
 learning_rate = 0.001
 
 # Only if using MPS
-mps_fallback = True
+mps_fallback = False
+
 
 # %% Load the model
 

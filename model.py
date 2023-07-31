@@ -191,7 +191,7 @@ class EdgeModel(torch.nn.Module):
         self.residuals = residuals
         self.edge_mlp = nn.Sequential(
             nn.Linear(2 * n_features + n_edge_features, hiddens),
-            nn.ReLU(),
+            nn.LeakyReLU(),
             nn.Linear(hiddens, n_targets),
         )
 
@@ -209,17 +209,17 @@ class TimeAwareNodeModel(torch.nn.Module):
         self.residuals = residuals
         self.node_mlp_future = nn.Sequential(
             nn.Linear(n_features + n_edge_features, hiddens),
-            nn.ReLU(),
+            nn.LeakyReLU(),
             nn.Linear(hiddens, n_targets),
         )
         self.node_mlp_past = nn.Sequential(
             nn.Linear(n_features + n_edge_features, hiddens),
-            nn.ReLU(),
+            nn.LeakyReLU(),
             nn.Linear(hiddens, n_targets),
         )
         self.node_mlp_combine = nn.Sequential(
             nn.Linear(n_targets * 2, hiddens),
-            nn.ReLU(),
+            nn.LeakyReLU(),
             nn.Linear(hiddens, n_targets),
         )
 
@@ -454,7 +454,7 @@ class Net(torch.nn.Module):
             # self.conv.append(self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size, **kwargs))
             self.conv.append(
                 build_custom_mp(n_target_nodes=n_target_nodes, n_target_edges=n_target_edges, n_features=n_target_nodes, n_edge_features=n_target_edges,
-                                       layer_size=layer_size, residuals=residuals, device=device)
+                                layer_size=layer_size, residuals=residuals, device=device)
             )
 
         # self.predictor = EdgePredictor(layer_size, layer_size)
@@ -476,6 +476,12 @@ class Net(torch.nn.Module):
         x, edge_index, edge_attr = data.x, data.edge_index, data.edge_attr
         del data
 
+        # difference in features
+        distance_matrix = torch.cdist(x, x, p=2)
+        for i, edge in enumerate(edge_index.t()):
+            # edge_attr[i,-1] = 1 / distance_matrix[edge[0],edge[1]] # ------> to have feature between 0 and 1 <------------
+            edge_attr[i, -1] = distance_matrix[edge[0], edge[1]]
+        del distance_matrix
         # Step 2 - Enter the Message Passing layers
 
         # Fallback to CPU if device is MPS

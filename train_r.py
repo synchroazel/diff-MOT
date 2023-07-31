@@ -5,10 +5,10 @@ from torch_geometric.transforms import ToDevice
 from tqdm import tqdm
 from torchvision.ops import sigmoid_focal_loss
 from model import Net
-from motclass import MotDataset
-# from motclass_test import MotDataset
+
+from motclass_test import MotDataset
 from utilities import get_best_device, save_model
-from torch.nn import BCEWithLogitsLoss, BCELoss
+from torch.nn import BCEWithLogitsLoss
 
 device = get_best_device()
 
@@ -26,21 +26,9 @@ def single_validate(model, val_loader, idx, loss_function, device):
         pred_edges = model(data)  # Get the predicted edge labels
         gt_edges = data.y  # Get the true edge labels
 
-        # Check how many gt 1s have been predicted correctly
-        gt_ones = gt_edges.nonzero()
-        acc_on_ones = torch.where(pred_edges[gt_ones] > 0.5, 1., 0.).mean()
+        loss = loss_function(pred_edges, gt_edges)
 
-        # Check how many gt 0s have been predicted correctly
-        gt_zeros = (gt_edges == 0).nonzero()
-        acc_on_zeros = torch.where(pred_edges[gt_zeros] < 0.5, 1., 0.).mean()
-
-        # Check how many gt values overall have been predicted correctly
-        rounded_pred_edges = torch.where(pred_edges > 0.5, 1., 0.)
-        acc_total = torch.where(rounded_pred_edges == gt_edges, 1., 0.).mean()
-
-        loss = loss_function(pred_edges, gt_edges, reduction='sum', alpha=1 - 1/20, gamma=2)
-
-        return loss.item(), acc_total, acc_on_ones, acc_on_zeros
+        return loss.item()
 
 
 def train(model, train_loader, val_loader, loss_function, optimizer, epochs, device, mps_fallback=False):
@@ -79,7 +67,7 @@ def train(model, train_loader, val_loader, loss_function, optimizer, epochs, dev
             pred_edges = model(data)  # Get the predicted edge labels
             gt_edges = data.y  # Get the true edge labels
 
-            train_loss = loss_function(pred_edges, gt_edges, reduction='sum', alpha=1 - 1/20, gamma=2)
+            train_loss = loss_function(pred_edges, gt_edges)
 
             # Backward and optimize
             optimizer.zero_grad()
@@ -93,17 +81,16 @@ def train(model, train_loader, val_loader, loss_function, optimizer, epochs, dev
 
             """ Validation step """
 
-            val_loss, val_acc, val_acc_1, val_acc_0 = single_validate(model, val_loader, i, loss_function, device)
+            val_loss = single_validate(model, val_loader, i, loss_function, device)
             total_val_loss += val_loss
 
             """ Update progress """
 
             avg_train_loss_msg = f'avg.Tr.Loss: {(total_train_loss / (i + 1)):.4f} (last: {train_loss:.4f})'
             avg_val_loss_msg = f'avg.Val.Loss: {(total_val_loss / (i + 1)):.4f} (last: {val_loss:.4f})'
-            last_val_acc = f'Val.Acc: {val_acc:.4f} (1s: {int(val_acc_1 * 100)}% | 0s: {int(val_acc_0 * 100)}%)'
 
             pbar_ep.set_description(
-                f'[TQDM] Epoch #{epoch + 1} - {avg_train_loss_msg} - {avg_val_loss_msg} | {last_val_acc}')
+                f'[TQDM] Epoch #{epoch + 1} - {avg_train_loss_msg} - {avg_val_loss_msg}')
 
             last_track_idx = cur_track_idx
 
@@ -127,12 +114,12 @@ dtype = torch.float32
 backbone = 'resnet50'
 layer_type = 'GeneralConv'
 subtrack_len = 20
-slide = 5
+slide = 15
 linkage_window = 5
 l_size = 1000
 epochs = 1
 heads = 1
-learning_rate = 0.0001
+learning_rate = 0.001
 knn_dict = {
     'k':20,
     'cosine':False
@@ -158,8 +145,9 @@ model = Net(backbone=backbone,
             device=device
             )
 
-# loss_function = torch.nn.BCEWithLogitsLoss()
-loss_function = sigmoid_focal_loss
+# loss_function = torch.nn.BCEWithLogitsLoss(reduction='mean')
+loss_function = torch.nn.HuberLoss(reduction="mean", delta=2.)
+
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
 
