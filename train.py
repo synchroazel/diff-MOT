@@ -129,10 +129,10 @@ layer_type = 'GeneralConv'
 subtrack_len = 20
 slide = 5
 linkage_window = 5
-l_size = 1000
+l_size = 500
 epochs = 1
 heads = 1
-learning_rate = 0.0001
+learning_rate = 0.001
 knn_dict = {
     'k':20,
     'cosine':False

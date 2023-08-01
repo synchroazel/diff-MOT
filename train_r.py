@@ -28,7 +28,17 @@ def single_validate(model, val_loader, idx, loss_function, device):
 
         loss = loss_function(pred_edges, gt_edges)
 
-        return loss.item()
+        # pred_edges = torch.where(pred_edges > 0.5, 1., pred_edges)
+        # pred_edges = torch.where(pred_edges <= 0.5, 0, pred_edges)
+#
+        # gt_edges = torch.where(gt_edges > 0.5, 1., gt_edges)
+        # gt_edges = torch.where(gt_edges <= 0.5, 0, gt_edges)
+#
+        # gt_ones = gt_edges.nonzero()
+        # acc_on_ones = torch.where(pred_edges[gt_ones] == 1.0, 1., 0.).mean()
+        # acc_zeros = torch.where(pred_edges[-gt_ones] == 0., 1., 0.).mean()
+
+        return loss.item() # , acc_on_ones.item(), acc_zeros.item()
 
 
 def train(model, train_loader, val_loader, loss_function, optimizer, epochs, device, mps_fallback=False):
@@ -59,7 +69,7 @@ def train(model, train_loader, val_loader, loss_function, optimizer, epochs, dev
                 f'[TQDM] Training on track {cur_track_idx}/{len(train_loader.tracklist)} ({cur_track_name})')
 
             # On track switch, save the model
-            if cur_track_idx != last_track_idx:
+            if cur_track_idx != last_track_idx and cur_track_idx != 0:
                 save_model(model, mps_fallback=mps_fallback)
 
             """ Training step """
@@ -81,13 +91,14 @@ def train(model, train_loader, val_loader, loss_function, optimizer, epochs, dev
 
             """ Validation step """
 
+            # val_loss, acc1, acc0 = single_validate(model, val_loader, i, loss_function, device)
             val_loss = single_validate(model, val_loader, i, loss_function, device)
             total_val_loss += val_loss
 
             """ Update progress """
 
             avg_train_loss_msg = f'avg.Tr.Loss: {(total_train_loss / (i + 1)):.4f} (last: {train_loss:.4f})'
-            avg_val_loss_msg = f'avg.Val.Loss: {(total_val_loss / (i + 1)):.4f} (last: {val_loss:.4f})'
+            avg_val_loss_msg = f'avg.Val.Loss: {(total_val_loss / (i + 1)):.4f} (last: {val_loss:.4f})' # | val accuracy: 1 -> {acc1:.4f} , 0-> {acc0:.4f}'
 
             pbar_ep.set_description(
                 f'[TQDM] Epoch #{epoch + 1} - {avg_train_loss_msg} - {avg_val_loss_msg}')
@@ -116,7 +127,7 @@ layer_type = 'GeneralConv'
 subtrack_len = 20
 slide = 15
 linkage_window = 5
-l_size = 1000
+l_size = 500
 epochs = 1
 heads = 1
 learning_rate = 0.001
@@ -146,7 +157,7 @@ model = Net(backbone=backbone,
             )
 
 # loss_function = torch.nn.BCEWithLogitsLoss(reduction='mean')
-loss_function = torch.nn.HuberLoss(reduction="mean", delta=2.)
+loss_function = torch.nn.HuberLoss(reduction="mean", delta=.4)
 
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
