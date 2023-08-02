@@ -4,7 +4,7 @@ Set of classes used to deal with datasets and tracks.
 
 import logging
 import os
-
+from  utilities import *
 import numpy as np
 import torch
 import torch_geometric.data as pyg_data
@@ -17,12 +17,9 @@ from tqdm import tqdm
 
 logging.basicConfig(format='[%(levelname)s] %(message)s', level=logging.INFO)
 
-LINKAGE_TYPES = {
-    "ADJACENT": 0,
-    "ALL": -1
-}
 
-# can we frame it as a regression task?
+
+# TODO: fuse with previous train
 
 class MOTGraph(pyg_data.Data):
 
@@ -303,7 +300,7 @@ class MotTrack:
                 for j in current_frame_nodes_indices:
                     for l in future_frame_nodes_indices:
                         adjacency_list.append([j, l])
-                        adjacency_list.append([l, j]) # ----------------------------------------------------------------
+                        # adjacency_list.append([l, j]) # ----------------------------------------------------------------
 
         adjacency_list = torch.tensor(adjacency_list).to(torch.int16).to(self.device)
 
@@ -355,7 +352,7 @@ class MotTrack:
                     for j in range(len(path) - 1):
                         try:
                             gt_dict[str(i)].append([path[j], path[j + i]])
-                            gt_adjacency_list.append([path[i + 1], path[i]]) # -------------------------------------------------
+                            # gt_adjacency_list.append([path[i + 1], path[i]]) # -------------------------------------------------
                         except:
                             continue
 

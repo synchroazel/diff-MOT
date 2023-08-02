@@ -6,7 +6,9 @@ import pickle
 import networkx as nx
 import numpy as np
 import torch
+from torch.nn import HuberLoss, BCEWithLogitsLoss
 from torch_geometric.utils import to_networkx
+from torchvision.ops import sigmoid_focal_loss
 
 
 def create_subtracks(track_directory: str, frames: int) -> None:
@@ -149,3 +151,28 @@ def load_model_pkl(pkl_path, device='cpu'):
         unpickler = CustomUnpickler(file)
         obj = unpickler.load()
     return obj
+
+# TODO: add more?
+AVAILABLE_OPTIMIZERS = {
+    'AdamW': torch.optim.AdamW,
+    'Adam': torch.optim.Adam,
+    'Rprop': torch.optim.Rprop,
+    'SGD': torch.optim.SGD,
+    'RMSprop': torch.optim.RMSprop,
+    'Adagrad': torch.optim.Adagrad,
+    'Adamax': torch.optim.Adamax,
+    'Adadelta': torch.optim.Adadelta,
+
+}
+
+# implemented losses
+IMPLEMENTED_LOSSES = {
+    'huber': HuberLoss,
+    'bce': BCEWithLogitsLoss,
+    'focal': sigmoid_focal_loss,
+    'berhu':None,
+}
+
+EDGE_FEATURES_DIM = 6
+LINKAGE_TYPE_ALL = -1
+LINKAGE_TYPE_ADJACENT = 0
