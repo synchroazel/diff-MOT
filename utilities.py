@@ -1,4 +1,5 @@
 import io
+import json
 import logging
 import os
 import pickle
@@ -10,36 +11,10 @@ from torch.nn import HuberLoss, BCEWithLogitsLoss
 from torch_geometric.utils import to_networkx
 from torchvision.ops import sigmoid_focal_loss
 
+def create_folders(path):
+    if not os.path.exists(path):
+        os.makedirs(path)
 
-def create_subtracks(track_directory: str, frames: int) -> None:
-    """
-    This function is used to create subtracks of a MOT track.
-    To avoid memory cluttering, it creates symbolic links in the subfolders.
-    """
-
-    images = os.listdir(track_directory)
-    images = [x for x in images if x[-4] == '.']
-
-    subtrack_base = os.path.normpath(os.path.join(track_directory, "subtrack_"))
-
-    j = 0
-
-    for i, image in enumerate(images):
-
-        image_path = os.path.normpath(os.path.join(track_directory, image))
-
-        if i % frames == 0:
-            # create subfolder
-            subfolder = subtrack_base + str(j)
-            j += 1
-            if not os.path.exists(subfolder):
-                os.makedirs(subfolder)
-
-        # create symbolic link
-        try:
-            os.symlink(src=image_path, dst=os.path.normpath(os.path.join(subfolder, image)))
-        except FileExistsError:
-            pass
 
 
 def get_best_device():
@@ -87,8 +62,7 @@ def draw_graph(graph, track):
 def save_graph(graph, track):
     save_path = os.path.normpath(os.path.join("saves", *(str(track).split('/'))[0:-1]))
 
-    if not os.path.exists(save_path):
-        os.makedirs(save_path)
+    create_folders(save_path)
 
     file_name = os.path.normpath(os.path.join(save_path, str(track).split('/')[-1])) + ".pickle"
 
@@ -108,26 +82,54 @@ def load_graph(pickle_path):
 
 
 def save_model(model: torch.nn.Module,
-               adds: dict = None,
+               savepath_adds: dict = None,
                savepath: str = "saves/models",
                mode: str = "pkl",
-               mps_fallback: bool = False):
+               mps_fallback: bool = False,
+               classification:bool=False,
+               epoch:int=0,
+               track_name:str='',
+               epoch_info:dict = None):
     if mps_fallback:
         model.to(torch.device('cpu'))
+
+    # path components
+    technique = "classification" if classification else "regression"
+    epoch = "Epoch_" + str(epoch)
+
+    savepath = os.path.normpath(
+        os.path.join(
+            savepath,
+            technique,
+            epoch,
+            track_name
+        )
+    )
+    create_folders(savepath)
+    savepath = os.path.normpath(
+        os.path.join(
+            savepath, str(model)
+        )
+    )
 
     match mode:
 
         case "pkl":
 
-            pkl_savepath = os.path.normpath(os.path.join(savepath, str(model)))
+            if savepath_adds:
+                for key in savepath_adds:
+                    savepath += "_" + str(key) + "_" + str(savepath_adds[key])
 
-            if adds:
-                for key in adds:
-                    pkl_savepath += "_" + str(key) + "_" + str(adds[key])
-
-            pkl_savepath += ".pkl"
+            pkl_savepath = savepath + ".pkl"
 
             pickle.dump(model, open(pkl_savepath, "wb"))
+
+            if epoch_info:
+                json_savepath = savepath + ".json"
+                js = json.dumps(epoch_info, sort_keys=True, indent=4, separators=(',', ': '))
+                with open(json_savepath, 'w+') as f:
+                    f.write(js)
+
 
         case "weights":
             pass  # TODO implement
@@ -140,7 +142,7 @@ def save_model(model: torch.nn.Module,
 
 
 def load_model_pkl(pkl_path, device='cpu'):
-    class CustomUnpickler(pickle.Unpickler):
+    class CustomUnpickler(pickle.Unpickler): # this is necessary to deal with MPS
         def find_class(self, module, name):
             if module == 'torch.storage' and name == '_load_from_bytes':
                 return lambda b: torch.load(io.BytesIO(b), map_location=device)

@@ -2,9 +2,6 @@
 Set of classes used to deal with datasets and tracks.
 """
 
-import logging
-import os
-
 import numpy as np
 import torch
 import torch_geometric.data as pyg_data
@@ -15,52 +12,47 @@ from torchvision import transforms
 from torchvision.ops import box_convert
 from tqdm import tqdm
 
+from utilities import *
+
 logging.basicConfig(format='[%(levelname)s] %(message)s', level=logging.INFO)
 
-LINKAGE_TYPES = {
-    "ADJACENT": 0,
-    "ALL": -1
-}
 
+
+# TODO: fuse with previous train
 
 class MOTGraph(pyg_data.Data):
 
-    def __init__(self, y, times, gt_adjacency_list, detections, **kwargs):
+    def __init__(self, y, times, gt_adjacency_dict, detections, **kwargs):
         super().__init__(**kwargs)
         self.y = y
         self.times = times
-        self.gt_edge_index = gt_adjacency_list
+        self.gt_edge_indexes = gt_adjacency_dict
         self.detections = detections
 
 
 def build_graph(adjacency_list: torch.Tensor,
-                gt_adjacency_list: torch.Tensor,
+                gt_dict: dict,
                 detections: torch.Tensor,
                 frame_times: torch.Tensor,
                 detections_coords: torch.Tensor,
                 device: torch.device,
                 dtype: torch.dtype = torch.float32,
                 mps_fallback: bool = False,
-                naive_pruning_args=None,
                 knn_pruning_args=None) -> pyg_data.Data:
     """
     This function's purpose is to process the output of `track.get_data()` to build an appropriate graph.
 
     :param adjacency_list: tensor which represents the adjacency list. This will be used as 'edge_index'
-    :param gt_adjacency_list: tensor which represents the ground truth adjacency list
+    :param
     :param detections: tensor which represents the node image
     :param frame_times: time distances of the frames
     :param detections_coords: coordinates of the detections bboxes
     :param device: device to use, either mps, cuda or cpu
     :param dtype: data type to use
     :param mps_fallback: if True, will fallback to cpu on certain operations if not supported by MPS
-    :param naive_pruning_args: args for naive pruning {"dist": int} - if None pruning is disabled
     :param knn_pruning_args: args for knn pruning {"k": int, "cosine": bool} - if None pruning is disabled
     :return: a Pytorch Geometric graph object
     """
-
-    if knn_pruning_args is not None and naive_pruning_args is not None:
-        raise ValueError("Cannot use multiple pruning methods at the same time.")
 
     detections = detections.to(dtype)
     number_of_nodes = len(detections)
@@ -79,11 +71,10 @@ def build_graph(adjacency_list: torch.Tensor,
 
     # Prepare for pyg_data.Data
     adjacency_list = adjacency_list.t().contiguous()
-    gt_adjacency_list = gt_adjacency_list.t().contiguous() if gt_adjacency_list is not None else None
 
     graph = MOTGraph(
         edge_index=adjacency_list,
-        gt_adjacency_list=gt_adjacency_list,
+        gt_adjacency_dict=gt_dict,
         y=None,
         detections=detections,
         num_nodes=number_of_nodes,
@@ -104,7 +95,6 @@ def build_graph(adjacency_list: torch.Tensor,
         if mps_fallback:
             graph = graph.to('mps')
 
-    # TODO: SUSHI attributes
     # # once the graph is pruned, compute edge attributes
     edge_attributes = torch.zeros(graph.edge_index.shape[1], 6).to(device)
     # obtain info for each edge
@@ -117,16 +107,16 @@ def build_graph(adjacency_list: torch.Tensor,
     # Gboxes = box_convert(detections_coords, "cxcywh", "xyxy")
     for egde in graph.edge_index.t():
         x.append(
-            ((2*(detections_coords[egde[1],0] - detections_coords[egde[0],0])) / #            2(xj - xi)
+            ((2 * (detections_coords[egde[1], 0] - detections_coords[egde[0], 0])) /  #            2(xj - xi)
              (detections_coords[egde[0],2] + detections_coords[egde[1],2])).item() #             wi + wj
         )
 
         y.append(
             ((2 * (detections_coords[egde[0], 1] - detections_coords[egde[1], 1])) / #            2(yj - yi)
-             (detections_coords[egde[0],3] + detections_coords[egde[1], 3])).item()  #               hi + hj
+             (detections_coords[egde[0], 3] + detections_coords[egde[1], 3])).item()  #               hi + hj
         )
 
-        h.append(torch.log(detections_coords[egde[0],2] / detections_coords[egde[1],2]).item())  # log(hi/hj)
+        h.append(torch.log(detections_coords[egde[0], 2] / detections_coords[egde[1], 2]).item())  # log(hi/hj)
 
         w.append(torch.log(detections_coords[egde[0],3] / detections_coords[egde[1],3]).item()) # log(wi/wj)
 
@@ -140,59 +130,28 @@ def build_graph(adjacency_list: torch.Tensor,
         # )
 
     # position information
-    edge_attributes[:,0] = torch.tensor(x)
-    edge_attributes[:,1] = torch.tensor(y)
+    edge_attributes[:, 0] = torch.tensor(x)
+    edge_attributes[:, 1] = torch.tensor(y)
     edge_attributes[:, 2] = torch.tensor(h)
     edge_attributes[:, 3] = torch.tensor(w)
     # Time information
     edge_attributes[:, 4] = torch.tensor(t)
-    #
-    # # Appearance information
-    #
-    #
-    # # Motion consistency information
-    # edge_attributes[:,6] = torch.tensor(GIoU)
 
-    """ Our edge attributes """
-
-    # edge_attributes = torch.zeros(graph.edge_index.shape[1], 2).to(device)
-#
-    # # Those 2 are calculated here because knn_morpher does not update them
-    # detections_dist = torch.cdist(graph.pos,
-    #                               graph.pos, p=2).to('cpu')
-#
-    # # Create a 1D Tensor with the distances of the detections ordered as the edges in the adj list
-    # a = graph.edge_index.t()[:, 0].to('cpu').to(torch.int64)
-    # b = graph.edge_index.t()[:, 1].to('cpu').to(torch.int64)
-    # edge_attributes[:, 0] = detections_dist[a, b]
-#
-    # # Compute the spatial distance between the detections
-#
-    # detections_dist = torch.cdist(frame_times.to(dtype),
-    #                               frame_times.to(dtype), p=2).to('cpu')
-#
-    # # Create a 1D Tensor with the distances of the detections ordered as the edges in the adj list
-    # edge_attributes[:, 1] = detections_dist[a, b]
-#
-    # # Delete the tensors to free up memory
-    # del detections_dist
-    # del a
-    # del b
-
-    # edge_attributes = 1 / (edge_attributes.to(device) + 0.00001)
     graph.edge_attr = edge_attributes
+    del x, y, h, w, t
 
     # Build `y` tensor to compare predictions with gt
-    if gt_adjacency_list is not None:
-        gt_adjacency_set = set([tuple(x) for x in gt_adjacency_list.t().tolist()])
-        # assert no ground truth has been lost
-        test_list = graph.edge_index.t().tolist()
-        test = [list(a) in test_list for a in gt_adjacency_set]
-        assert all(a is True for a in test)
-        del test, test_list
-        y = torch.tensor([1 if tuple(x) in gt_adjacency_set else 0 for x in graph.edge_index.t().tolist()]).to(dtype)
-        graph.y = y
+    weight_potencies = list(gt_dict.keys())
 
+    if gt_dict is not None:
+        y = torch.zeros(len(graph.edge_attr)).to(device=device,dtype=dtype)
+        for i, x in enumerate(graph.edge_index.t().tolist()):
+            for potency in weight_potencies:
+                gt_list = gt_dict[potency]
+                if x in gt_list:
+                    y[i] = 1 / int(potency)
+                    break
+        graph.y = y
 
     return graph
 
@@ -210,7 +169,7 @@ class MotTrack:
                  dtype: torch.dtype = torch.float32,
                  logging_lv: int = logging.INFO,
                  name: str = "track",
-                 black_and_white_features=False):
+                 classification=False):
 
         # Set logging level
         logging.getLogger().setLevel(logging_lv)
@@ -226,11 +185,11 @@ class MotTrack:
         self.n_nodes = []
         self.dtype = dtype
         self.logging_lv = logging_lv
-        self.black_and_white_features = black_and_white_features
+        self.classification=classification
 
         logging.info(f"{self.n_frames} frames")
 
-        # CHeck if the chosen linkage window is possible
+        # Check if the chosen linkage window is possible
         if self.linkage_window > self.n_frames:
             logging.warning(f"`linkage window` was set to {self.linkage_window} but track has {self.n_frames} frames."
                             f"Setting `linkage window` to {self.n_frames}")
@@ -259,8 +218,6 @@ class MotTrack:
         i = 0  # frame counter
         j = 0
         channels = 3
-        if self.black_and_white_features:
-            channels = 1
 
         number_of_detections = sum([len(x) for x in self.detections])
 
@@ -277,8 +234,6 @@ class MotTrack:
                 pbar.set_description(f"[TQDM] Reading frame {image}")
 
             image = Image.open(os.path.normpath(image))  # all image detections in the current frame
-            if self.black_and_white_features:
-                image = image.convert('L')
 
             for detection in self.detections[i]:
                 nodes += 1
@@ -341,7 +296,7 @@ class MotTrack:
                 for j in current_frame_nodes_indices:
                     for l in future_frame_nodes_indices:
                         adjacency_list.append([j, l])
-                        adjacency_list.append([l, j]) # ----------------------------------------------------------------
+                        # adjacency_list.append([l, j]) # ----------------------------------------------------------------
 
         adjacency_list = torch.tensor(adjacency_list).to(torch.int16).to(self.device)
 
@@ -364,7 +319,7 @@ class MotTrack:
 
             all_paths = list()
 
-            # Iterate over all the detections ids (aka over all gr trajectories)
+            # Iterate over all the detections ids (aka over all gt trajectories)
             for det_id in gt_detections_ids:
 
                 cur_path = list()
@@ -380,19 +335,39 @@ class MotTrack:
                 # all_paths wll be a list of lists, each list containing the detections ids of a gt trajectory
                 all_paths.append(cur_path)
 
-            # Fill gt_adjacency_list using the detections in all_paths
-            for path in all_paths:
-                for i in range(len(path) - 1):
-                    gt_adjacency_list.append([path[i], path[i + 1]])
-                    gt_adjacency_list.append([path[i + 1], path[i]]) # -------------------------------------------------
+            # build ground truth dict
 
-            # Prepare the edge index tensor for pytorch geometric
-            gt_adjacency_list = torch.tensor(gt_adjacency_list).to(torch.int16).to(self.device)
+            gt_dict = dict()
+            if self.linkage_window == -1:
+                self.linkage_window = self.n_frames
+
+            if self.classification:
+                gt_dict['1'] = []
+                for path in all_paths:
+                    for j in range(len(path) - 1):
+                        try:
+                            gt_dict['1'].append([path[j], path[j + i]])
+                            # gt_adjacency_list.append([path[i + 1], path[i]]) # -------------------------------------------------
+                        except:
+                            continue
+            else:
+                for i in range(1, self.linkage_window + 1):
+                    gt_dict[str(i)] = []
+                # Fill gt_adjacency_list using the detections in all_paths
+                for i in range(1, self.linkage_window + 1):
+                    for path in all_paths:
+                        for j in range(len(path) - 1):
+                            try:
+                                gt_dict[str(i)].append([path[j], path[j + i]])
+                                # gt_adjacency_list.append([path[i + 1], path[i]]) # -------------------------------------------------
+                            except:
+                                continue
 
             logging.info(f"{len(gt_adjacency_list)} total gt edges ({len(all_paths)} trajectories)")
 
         else:
             logging.info(f"No ground truth adjacency list available")
+            gt_dict = None
 
         """
         Output section
@@ -400,7 +375,7 @@ class MotTrack:
 
         return {
             "adjacency_list": adjacency_list,
-            "gt_adjacency_list": gt_adjacency_list,
+            "gt_dict": gt_dict,
             "detections": flattened_node_features,
             "frame_times": frame_times,
             "detections_coords": track_detections_coords
@@ -426,7 +401,8 @@ class MotDataset(Dataset):
                  knn_pruning_args=None,
                  mps_fallback: bool = False,
                  device: torch.device = torch.device("cpu"),
-                 dtype=torch.float32):
+                 dtype=torch.float32,
+                 classification=False):
         self.dataset_dir = dataset_path
         self.split = split
         self.detections_file_folder = detections_file_folder
@@ -449,6 +425,7 @@ class MotDataset(Dataset):
         self.end_frame = None
         self.start_frames = None
         self.tracks = None
+        self.classification=classification
 
         # Initialization for pruning arguments
         if naive_pruning_args is None:
@@ -557,7 +534,7 @@ class MotDataset(Dataset):
                          det_resize=self.det_resize,
                          linkage_window=self.linkage_window,
                          subtrack_len=self.subtrack_len,
-                         black_and_white_features=self.black_and_white_features,
+                         classification=self.classification,
                          device=self.device,
                          dtype=self.dtype,
                          logging_lv=logging.WARNING if self.dl_mode else logging.INFO,
@@ -568,7 +545,6 @@ class MotDataset(Dataset):
                 mps_fallback=self.mps_fallback,
                 device=self.device,
                 dtype=self.dtype,
-                naive_pruning_args=self.naive_pruning_args,
                 knn_pruning_args=self.knn_pruning_args,
                 **track.get_data())
         else:

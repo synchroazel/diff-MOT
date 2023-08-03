@@ -4,7 +4,7 @@ import torch
 from torch_geometric.transforms import ToDevice
 from tqdm import tqdm
 
-from motclass_test import MotDataset
+from motclass import MotDataset
 from utilities import *
 
 
@@ -54,13 +54,10 @@ def test(model, val_loader, loss_function, output_file_folder="outcomes", device
             zero_mask = gt_edges < zero_threshold
             one_mask = gt_edges > one_threshold
 
-            gt_edges = torch.where(one_mask, 1., gt_edges)
-            gt_edges = torch.where(zero_mask, 0, gt_edges)
-
             acc_on_ones = torch.where(pred_edges[one_mask] == 1.0, 1., 0.).mean()
             acc_zeros = torch.where(pred_edges[zero_mask] == 0., 1., 0.).mean()
-            zeros_as_ones = torch.where(pred_edges[one_mask] == 0., 1., 0.).mean() * 100
-            ones_as_zeros = torch.where(pred_edges[zero_mask] == 1., 1., 0.).mean() * 100
+            ones_as_zeros = torch.where(pred_edges[one_mask] == 0., 1., 0.).mean()
+            zeros_as_ones = torch.where(pred_edges[zero_mask] == 1., 1., 0.).mean()
             total_val_loss += val_loss
 
         avg_val_loss_msg = f'avg.Loss: {(total_val_loss / (i + 1)):.4f} (last: {val_loss:.4f})'
@@ -215,5 +212,5 @@ test(model=model,
      gamma=alpha,
      reduction=reduction,
      device=device,
-     zero_threshold = zero_threshold,
-     one_threshold = one_threshold)
+     zero_threshold=zero_threshold,
+     one_threshold=one_threshold)
