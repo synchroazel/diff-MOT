@@ -353,6 +353,32 @@ mot_val_dl = MotDataset(dataset_path=val_dataset_path,
                         dtype=dtype,
                         mps_fallback=mps_fallback,
                         classification=classification)
+# print info
+print("[INFO] hyper parameters:")
+print("\nDatasets:")
+print("\tDataset used for training: " + mot_train + " | validation: " + mot_val)
+print("\tSubtrack lenght: " + str(subtrack_len) + "\n\t" +
+        "Linkage window: " + str(linkage_window) + "\n\t" +
+      "Slide: " + str(slide) + "\n\t" +
+      "Knn : " + str(knn_args['k']))
+if classification:
+    print("\tSetting: classification")
+else:
+    print("\tSetting: regression")
+print("\nNetwork:")
+print("\tbackbone: " + backbone + "\n\t" +
+      "number of heads: " + str(heads) + "\n\t" +
+      "number of message passing steps: " + str(messages) + "\n\t" +
+      "layer type: " + layer_type + "\n\t" +
+      "layer size: " + str(l_size) + "\n\t" +
+      "number of edge features: " + str(EDGE_FEATURES_DIM) + "\n\t" +
+      "dropout: " + str(args.dropout) + "\n"
+      )
+
+print("Training:")
+print("\tLoss function: " + loss_type)
+print("\tOptimizer: " + args.optimizer)
+print("\tLearning rate: " + str(learning_rate))
 
 # %% Train the model
 

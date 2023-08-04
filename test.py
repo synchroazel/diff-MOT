@@ -80,7 +80,7 @@ parser.add_argument('-D', '--datapath', default="/media/dmmp/vid+backup/Data", h
 NB: This project assumes a MOT dataset, this project has been tested with MOT17 and MOT20""") # TODO: remove the default option before deployment
 parser.add_argument('--model_savepath', default="saves/models", help="""Folder where models are loaded""")
 parser.add_argument('--output_savepath', default="saves/outputs", help="""Folder where outputs are saved""")
-parser.add_argument('-m', '--model', default="timeaware_500_resnet50-backbone.pkl", help="""Name of the network
+parser.add_argument('-m', '--model', default="timeaware_500_resnet50-backbone.pkl.bak", help="""Name of the network
 NB: the model must be stored in the specified save folder""")
 parser.add_argument('-M', '--MOT', default="MOT20", help="""MOT dataset of reference.""")
 parser.add_argument('-T', '--split', default="train", help="""MOT dataset split""")
