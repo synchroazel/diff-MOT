@@ -54,6 +54,8 @@ def build_graph(adjacency_list: torch.Tensor,
     :return: a Pytorch Geometric graph object
     """
 
+    detections_coords_og = detections_coords.clone().detach()
+
     detections = detections.to(dtype)
     number_of_nodes = len(detections)
 
@@ -77,6 +79,7 @@ def build_graph(adjacency_list: torch.Tensor,
         gt_adjacency_dict=gt_dict,
         y=None,
         detections=detections,
+        detections_coords=detections_coords_og,
         num_nodes=number_of_nodes,
         edge_attr=None,
         pos=position_matrix,
@@ -346,8 +349,8 @@ class MotTrack:
                 for path in all_paths:
                     for j in range(len(path) - 1):
                         try:
-                            gt_dict['1'].append([path[j], path[j + i]])
-                            # gt_adjacency_list.append([path[i + 1], path[i]]) # -------------------------------------------------
+                            gt_dict['1'].append([path[j], path[j + 1]])
+                            # gt_adjacency_list.append([path[j + 1], path[j]]) # -------------------------------------------------
                         except:
                             continue
             else:

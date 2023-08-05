@@ -183,6 +183,7 @@ else:
 model_path = os.path.normpath(os.path.join(saves_path, model_pkl))
 model = load_model_pkl(model_path, device=device).to(device)
 model.mps_fallback = mps_fallback
+model.eval()
 
 detections_file_folder = args.detection_gt_folder
 detections_file_name = args.detection_gt_file
