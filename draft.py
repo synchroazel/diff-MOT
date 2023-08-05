@@ -9,6 +9,7 @@ from model import Net
 from motclass import MotDataset
 from utilities import get_best_device
 from utilities import load_model_pkl
+from collections import OrderedDict
 
 device = get_best_device()
 
@@ -50,7 +51,7 @@ id = 1
 final_df = pandas.DataFrame()
 
 
-def build_trajectory_rec(node_idx, pyg_graph, nx_graph, node_dists, nodes_todo, out, depth=0):
+def build_trajectory_rec(node_idx:int, pyg_graph, nx_graph, node_dists, nodes_todo:OrderedDict, out, depth:int=0):
 
     global id
     global nodes_dict
@@ -104,9 +105,9 @@ def build_trajectory_rec(node_idx, pyg_graph, nx_graph, node_dists, nodes_todo, 
     n1, n2 = best_edge
 
     # Remove nodes from to-visit set if there
-    if n1 in nodes_todo: nodes_todo.remove(n1)
-    if n2 in nodes_todo: nodes_todo.remove(n2)
-    # TODO: make more light
+    # node 1 is popped at the start and deleted in the previous iteration
+    del nodes_todo[n2]
+
 
     n1_coords = torchvision.ops.box_convert(pyg_graph.detections_coords[n1], 'xyxy','xywh').tolist()
     n2_coords = torchvision.ops.box_convert(pyg_graph.detections_coords[n2], 'xyxy','xywh').tolist()
@@ -117,33 +118,28 @@ def build_trajectory_rec(node_idx, pyg_graph, nx_graph, node_dists, nodes_todo, 
     # n1_coords = box_convert(n1_coords, in_fmt='xyxy', out_fmt='xywh')
     # n2_coords = box_convert(n2_coords, in_fmt='xyxy', out_fmt='xywh')
 
-    if (n1_frame, *n1_coords.tolist()) not in nodes_dict.keys():
-        nodes_dict[(n1_frame, *n1_coords.tolist())] = id
+    if (n1_frame, *n1_coords) not in nodes_dict.keys():
+        nodes_dict[(n1_frame, *n1_coords)] = id
 
-    if (n2_frame, *n2_coords.tolist()) not in nodes_dict.keys():
-        nodes_dict[(n2_frame, *n2_coords.tolist())] = id
+    if (n2_frame, *n2_coords) not in nodes_dict.keys():
+        nodes_dict[(n2_frame, *n2_coords)] = id
 
-    n1_id = nodes_dict[(n1_frame, *n1_coords.tolist())]
+    n1_id = nodes_dict[(n1_frame, *n1_coords)]
 
     # <frame>, <id>, <bb_left>, <bb_top>, <bb_width>, <bb_height>, <conf>, <x>, <y>, <z>
 
     out.append(
         {'frame': n1_frame + 1,
          'id': n1_id,
-         'bb_left': n1_coords[0].item(),
-         'bb_top': n1_coords[1].item(),
-         'bb_width': n1_coords[2].item(),
-         'bb_height': n1_coords[3].item(),
+         'bb_left': n1_coords[0],
+         'bb_top': n1_coords[1],
+         'bb_width': n1_coords[2],
+         'bb_height': n1_coords[3],
          'conf': -1,
          'x': -1,
          'y': -1,
          'z': -1}
     )
-
-    # print(
-    #     n1_frame, n1_id, n1_coords[0].item(), n1_coords[1].item(), n1_coords[2].item(), n1_coords[3].item(),
-    #     -1, -1, -1, -1
-    # )
 
     depth += 1
 
@@ -166,21 +162,34 @@ def build_trajectories(graph, preds, ths=.33):
 
     node_dists = torch.cdist(pyg_graph.pos, pyg_graph.pos, p=2)
 
-    nodes_todo = list(range(pyg_graph.num_nodes))  # Used as a stack
-    nodes_todo.reverse()
+    nodes_todo = OrderedDict([(node,node) for node in range(0, pyg_graph.num_nodes)])
     # Create a NetwrokX graph
     pyg_graph.edge_index = pred_edges.t()
     nx_graph = to_networkx(pyg_graph)
 
     while len(nodes_todo) > 0:
-        build_trajectory_rec(node_idx=nodes_todo.pop(), pyg_graph=pyg_graph, nx_graph=nx_graph, node_dists=node_dists,
+        starting_point = nodes_todo.popitem(last=False)[0]
+        build_trajectory_rec(node_idx=starting_point, pyg_graph=pyg_graph, nx_graph=nx_graph, node_dists=node_dists,
                              nodes_todo=nodes_todo, out=out)
         id += 1
         # print(f"\rRemaining nodes to visit: {len(nodes_todo)}     ", end="")
 
     return out
 
-for _, data in tqdm(enumerate(mot_train_dl), desc='[TQDM] Converting tracklet', total=mot_train_dl.n_subtracks):
+previous_track_idx = 0
+
+for _, data in tqdm(enumerate(mot_train_dl), desc='[TQDM] Converting tracklet', total=mot_train_dl.n_subtracks): # todo: explain track
+    cur_track_idx = mot_train_dl.cur_track
+    cur_track_name = mot_train_dl.tracklist[mot_train_dl.cur_track]
+    if cur_track_idx != previous_track_idx and cur_track_idx != 0:
+        previous_track_idx += 1
+        final_df.sort_values(by=['id', 'frame']).to_csv(cur_track_name + ".csv")
+
+        # reset values
+        final_df = pandas.DataFrame()
+        id = 0
+        nodes_dict = {}
+
     data = ToDevice(device.type)(data)
     # preds = model(data)
     # out = build_trajectories(data, preds=preds)
@@ -190,6 +199,6 @@ for _, data in tqdm(enumerate(mot_train_dl), desc='[TQDM] Converting tracklet', 
 
     final_df = pandas.concat([final_df, df], ignore_index=True)
 
-final_df.sort_values(by=['id', 'frame']).to_csv("test.csv")
+
 
 
