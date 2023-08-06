@@ -19,7 +19,7 @@ logging.basicConfig(format='[%(levelname)s] %(message)s', level=logging.INFO)
 
 
 
-# TODO: fuse with previous train
+# todo: fix data loading for last subtrack
 
 class MOTGraph(pyg_data.Data):
 
@@ -400,7 +400,6 @@ class MotDataset(Dataset):
                  subtrack_len: int = -1,
                  slide: int = 1,
                  dl_mode: bool = False,
-                 black_and_white_features=False,
                  naive_pruning_args=None,
                  knn_pruning_args=None,
                  mps_fallback: bool = False,
@@ -421,7 +420,6 @@ class MotDataset(Dataset):
         self.slide = slide
         self.subtrack_len = subtrack_len
         self.mps_fallback = mps_fallback
-        self.black_and_white_features = black_and_white_features
         self.device = device
         self.dl_mode = dl_mode
         self.dtype = dtype

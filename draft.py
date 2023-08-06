@@ -14,17 +14,17 @@ from collections import OrderedDict
 device = get_best_device()
 
 data_loader = MotDataset(dataset_path='/media/dmmp/vid+backup/Data/MOT17',
-                          split='train',
-                          subtrack_len=15,
-                          slide=10,
-                          linkage_window=5,
-                          detections_file_folder='gt',
-                          detections_file_name='gt.txt',
-                          dl_mode=True,
-                          knn_pruning_args={'k': 20, 'cosine': False},
-                          device=device,
-                          dtype=torch.float32,
-                          classification=True)
+                         split='train',
+                         subtrack_len=15,
+                         slide=10,
+                         linkage_window=5,
+                         detections_file_folder='gt',
+                         detections_file_name='gt.txt',
+                         dl_mode=True,
+                         knn_pruning_args={'k': 20, 'cosine': False},
+                         device=device,
+                         dtype=torch.float32,
+                         classification=True)
 
 # model = load_model_pkl("base_500_resnet50-backbone.pkl", device=device)  # regression
 # model.mps_fallback = True
@@ -88,20 +88,20 @@ def build_trajectory_rec(node_idx:int, pyg_graph, nx_graph, node_dists, nodes_to
 
             orp_id = nodes_dict[(orp_frame, *orp_coords)]
             new_row =  {'frame': orp_frame,
-                 'id': orp_id,
-                 'bb_left': orp_coords[0],
-                 'bb_top': orp_coords[1],
-                 'bb_width': orp_coords[2],
-                 'bb_height': orp_coords[3],
-                 'conf': -1,
-                 'x': -1,
-                 'y': -1,
-                 'z': -1}
+                       'id': orp_id,
+                       'bb_left': orp_coords[0],
+                       'bb_top': orp_coords[1],
+                       'bb_width': orp_coords[2],
+                       'bb_height': orp_coords[3],
+                       'conf': -1,
+                       'x': -1,
+                       'y': -1,
+                       'z': -1}
             final_df.loc[len(final_df)] = new_row
 
             ### CHECK IF NEEDED ###
 
-        return new_id # True
+        return new_id  # True
 
     # Find best edge to keep
     # TODO: find best peso
@@ -231,5 +231,5 @@ for _, data in tqdm(enumerate(data_loader), desc='[TQDM] Converting tracklet', t
 
 
 
-# todo: fix
+# todo: fix data loading
 
