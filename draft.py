@@ -135,20 +135,28 @@ def build_trajectory_rec(node_idx:int, pyg_graph, nx_graph, node_dists, nodes_to
         new_id = False
     if not c1:
         nodes_dict[(n1_frame, *n1_coords)] = id
-
+    node_id = nodes_dict[(n1_frame, *n1_coords)]
     if not c2:
-        nodes_dict[(n2_frame, *n2_coords)] = id
-
-    n1_id = nodes_dict[(n1_frame, *n1_coords)]
-
+        nodes_dict[(n2_frame, *n2_coords)] = node_id
     # <frame>, <id>, <bb_left>, <bb_top>, <bb_width>, <bb_height>, <conf>, <x>, <y>, <z>
-    if not c2: # c1 will always be true after the first iteration, because we also add the second node
+    if not c1:
         final_df.loc[len(final_df)] = {'frame': n1_frame,
-                                       'id': n1_id,
+                                       'id': node_id,
                                        'bb_left': n1_coords[0],
                                        'bb_top': n1_coords[1],
                                        'bb_width': n1_coords[2],
                                        'bb_height': n1_coords[3],
+                                       'conf': -1,
+                                       'x': -1,
+                                       'y': -1,
+                                       'z': -1}
+    if not c2: # c1 will always be true after the first iteration, because we also add the second node
+        final_df.loc[len(final_df)] = {'frame': n2_frame,
+                                       'id': node_id,
+                                       'bb_left': n2_coords[0],
+                                       'bb_top': n2_coords[1],
+                                       'bb_width': n2_coords[2],
+                                       'bb_height': n2_coords[3],
                                        'conf': -1,
                                        'x': -1,
                                        'y': -1,
