@@ -9,12 +9,12 @@ dataset_old_delete/
 wandb/
 *.json
 singularity/*.o*
-
+*.csv
 *.png
 *.ckpt
 *.sif
 *.pyc
-
+/preprocessed_data/*
 Mambaforge-Linux-x86_64.sh
 *.zip
 *.tar

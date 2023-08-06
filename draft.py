@@ -13,10 +13,10 @@ from collections import OrderedDict
 
 device = get_best_device()
 
-mot_train_dl = MotDataset(dataset_path='/media/dmmp/vid+backup/Data/MOT17',
+data_loader = MotDataset(dataset_path='/media/dmmp/vid+backup/Data/MOT17',
                           split='train',
                           subtrack_len=15,
-                          slide=15,
+                          slide=10,
                           linkage_window=5,
                           detections_file_folder='gt',
                           detections_file_name='gt.txt',
@@ -48,14 +48,27 @@ model = model.to(device)
 
 nodes_dict = {}  # frame, bbox
 id = 1
-final_df = pandas.DataFrame()
+final_df = pandas.DataFrame(columns=['frame',
+                                     'id',
+                                     'bb_left',
+                                     'bb_top',
+                                     'bb_width',
+                                     'bb_height',
+                                     'conf',
+                                     'x',
+                                     'y',
+                                     'z'])
+track_frame = 1
 
 
-def build_trajectory_rec(node_idx:int, pyg_graph, nx_graph, node_dists, nodes_todo:OrderedDict, out, depth:int=0):
+def build_trajectory_rec(node_idx:int, pyg_graph, nx_graph, node_dists, nodes_todo:OrderedDict, depth:int=0) -> bool:
 
     global id
     global nodes_dict
+    global final_df
+    global track_frame
 
+    new_id = True
     all_out_edges = nx_graph.out_edges(node_idx)
 
     # Remove edges going in the past
@@ -67,30 +80,28 @@ def build_trajectory_rec(node_idx:int, pyg_graph, nx_graph, node_dists, nodes_to
 
             ### CHECK IF NEEDED ###
 
-            orp_coords = pyg_graph.detections_coords[node_idx]
-            orp_frame = pyg_graph.times[node_idx].tolist()[0]
+            orp_coords = torchvision.ops.box_convert(pyg_graph.detections_coords[node_idx], 'xyxy','xywh').tolist()
+            orp_frame = track_frame + pyg_graph.times[node_idx].tolist()[0]
 
-            if (orp_frame, *orp_coords.tolist()) not in nodes_dict.keys():
-                nodes_dict[(orp_frame, *orp_coords.tolist())] = id
+            if (orp_frame, *orp_coords) not in nodes_dict.keys():
+                nodes_dict[(orp_frame, *orp_coords)] = id
 
-            orp_id = nodes_dict[(orp_frame, *orp_coords.tolist())]
-
-            out.append(
-                {'frame': orp_frame,
+            orp_id = nodes_dict[(orp_frame, *orp_coords)]
+            new_row =  {'frame': orp_frame,
                  'id': orp_id,
-                 'bb_left': orp_coords[0].item(),
-                 'bb_top': orp_coords[1].item(),
-                 'bb_width': orp_coords[2].item(),
-                 'bb_height': orp_coords[3].item(),
+                 'bb_left': orp_coords[0],
+                 'bb_top': orp_coords[1],
+                 'bb_width': orp_coords[2],
+                 'bb_height': orp_coords[3],
                  'conf': -1,
                  'x': -1,
                  'y': -1,
                  'z': -1}
-            )
+            final_df.loc[len(final_df)] = new_row
 
             ### CHECK IF NEEDED ###
 
-        return
+        return new_id # True
 
     # Find best edge to keep
     # TODO: find best peso
@@ -112,39 +123,42 @@ def build_trajectory_rec(node_idx:int, pyg_graph, nx_graph, node_dists, nodes_to
     n1_coords = torchvision.ops.box_convert(pyg_graph.detections_coords[n1], 'xyxy','xywh').tolist()
     n2_coords = torchvision.ops.box_convert(pyg_graph.detections_coords[n2], 'xyxy','xywh').tolist()
 
-    n1_frame = pyg_graph.times[n1].tolist()[0]
-    n2_frame = pyg_graph.times[n2].tolist()[0]
+    n1_frame = track_frame + pyg_graph.times[n1].tolist()[0]
+    n2_frame = track_frame + pyg_graph.times[n2].tolist()[0]
 
     # n1_coords = box_convert(n1_coords, in_fmt='xyxy', out_fmt='xywh')
     # n2_coords = box_convert(n2_coords, in_fmt='xyxy', out_fmt='xywh')
 
-    if (n1_frame, *n1_coords) not in nodes_dict.keys():
+    c1 = (n1_frame, *n1_coords) in nodes_dict.keys()
+    c2 = (n2_frame, *n2_coords) in nodes_dict.keys()
+    if depth == 0 and c1:
+        new_id = False
+    if not c1:
         nodes_dict[(n1_frame, *n1_coords)] = id
 
-    if (n2_frame, *n2_coords) not in nodes_dict.keys():
+    if not c2:
         nodes_dict[(n2_frame, *n2_coords)] = id
 
     n1_id = nodes_dict[(n1_frame, *n1_coords)]
 
     # <frame>, <id>, <bb_left>, <bb_top>, <bb_width>, <bb_height>, <conf>, <x>, <y>, <z>
-
-    out.append(
-        {'frame': n1_frame + 1,
-         'id': n1_id,
-         'bb_left': n1_coords[0],
-         'bb_top': n1_coords[1],
-         'bb_width': n1_coords[2],
-         'bb_height': n1_coords[3],
-         'conf': -1,
-         'x': -1,
-         'y': -1,
-         'z': -1}
-    )
+    if not c2: # c1 will always be true after the first iteration, because we also add the second node
+        final_df.loc[len(final_df)] = {'frame': n1_frame,
+                                       'id': n1_id,
+                                       'bb_left': n1_coords[0],
+                                       'bb_top': n1_coords[1],
+                                       'bb_width': n1_coords[2],
+                                       'bb_height': n1_coords[3],
+                                       'conf': -1,
+                                       'x': -1,
+                                       'y': -1,
+                                       'z': -1}
 
     depth += 1
 
-    build_trajectory_rec(node_idx=n2, pyg_graph=pyg_graph, nx_graph=nx_graph, node_dists=node_dists, nodes_todo=nodes_todo,
-                         out=out, depth=depth)
+    _ = build_trajectory_rec(node_idx=n2, pyg_graph=pyg_graph, nx_graph=nx_graph, node_dists=node_dists, nodes_todo=nodes_todo,
+                             depth=depth)
+    return new_id
 
 
 def build_trajectories(graph, preds, ths=.33):
@@ -158,8 +172,6 @@ def build_trajectories(graph, preds, ths=.33):
 
     pred_edges = pyg_graph.edge_index.t()[mask]
 
-    out = []
-
     node_dists = torch.cdist(pyg_graph.pos, pyg_graph.pos, p=2)
 
     nodes_todo = OrderedDict([(node,node) for node in range(0, pyg_graph.num_nodes)])
@@ -169,36 +181,47 @@ def build_trajectories(graph, preds, ths=.33):
 
     while len(nodes_todo) > 0:
         starting_point = nodes_todo.popitem(last=False)[0]
-        build_trajectory_rec(node_idx=starting_point, pyg_graph=pyg_graph, nx_graph=nx_graph, node_dists=node_dists,
-                             nodes_todo=nodes_todo, out=out)
-        id += 1
+        new_id = build_trajectory_rec(node_idx=starting_point, pyg_graph=pyg_graph, nx_graph=nx_graph, node_dists=node_dists,
+                                      nodes_todo=nodes_todo)
+        if new_id:
+            id += 1
         # print(f"\rRemaining nodes to visit: {len(nodes_todo)}     ", end="")
 
-    return out
 
 previous_track_idx = 0
 
-for _, data in tqdm(enumerate(mot_train_dl), desc='[TQDM] Converting tracklet', total=mot_train_dl.n_subtracks): # todo: explain track
-    cur_track_idx = mot_train_dl.cur_track
-    cur_track_name = mot_train_dl.tracklist[mot_train_dl.cur_track]
+for _, data in tqdm(enumerate(data_loader), desc='[TQDM] Converting tracklet', total=data_loader.n_subtracks): # todo: explain track
+    cur_track_idx = data_loader.cur_track
+    cur_track_name = data_loader.tracklist[data_loader.cur_track]
     if cur_track_idx != previous_track_idx and cur_track_idx != 0:
         previous_track_idx += 1
         final_df.sort_values(by=['id', 'frame']).to_csv(cur_track_name + ".csv")
-
         # reset values
-        final_df = pandas.DataFrame()
-        id = 0
-        nodes_dict = {}
+        nodes_dict = {}  # frame, bbox
+        id = 1
+        track_frame = 1
+        final_df = pandas.DataFrame(columns=['frame',
+                                             'id',
+                                             'bb_left',
+                                             'bb_top',
+                                             'bb_width',
+                                             'bb_height',
+                                             'conf',
+                                             'x',
+                                             'y',
+                                             'z'])
+        # todo: remove
+        exit(1)
+
+
 
     data = ToDevice(device.type)(data)
     # preds = model(data)
     # out = build_trajectories(data, preds=preds)
-    out = build_trajectories(data, data.y)
-
-    df = pandas.DataFrame.from_dict(out)
-
-    final_df = pandas.concat([final_df, df], ignore_index=True)
+    build_trajectories(data, data.y)
+    track_frame += data_loader.slide
 
 
 
+# todo: fix
 

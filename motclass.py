@@ -1,6 +1,7 @@
 """
 Set of classes used to deal with datasets and tracks.
 """
+import pickle
 
 import numpy as np
 import torch
@@ -403,9 +404,13 @@ class MotDataset(Dataset):
                  naive_pruning_args=None,
                  knn_pruning_args=None,
                  mps_fallback: bool = False,
-                 device: torch.device = torch.device("cpu"),
+                 device: torch.device = torch.device("cuda"),
                  dtype=torch.float32,
-                 classification=False):
+                 classification=False,
+                 preprocessing:bool = False,
+                 preprocessed: bool = True,
+                 preprocessed_data_folder: str = 'preprocessed_data'
+                 ):
         self.dataset_dir = dataset_path
         self.split = split
         self.detections_file_folder = detections_file_folder
@@ -428,7 +433,17 @@ class MotDataset(Dataset):
         self.end_frame = None
         self.start_frames = None
         self.tracks = None
-        self.classification=classification
+        self.classification = classification
+        self.preprocessed = preprocessed
+        self.preprocessed_data_folder = preprocessed_data_folder
+        self.preprocessing = preprocessing
+
+        if self.preprocessing:
+            print("[INFO] Data loader set in preprocessing mode")
+        if self.preprocessed:
+            print("[INFO] Data loader set in preprocessed mode")
+        if self.preprocessing and self.preprocessed:
+            raise Exception("Data loader cannot be in both preprocessing and preprocessed mode")
 
         # Initialization for pruning arguments
         if naive_pruning_args is None:
@@ -451,6 +466,20 @@ class MotDataset(Dataset):
         if self.slide > 1 or self.subtrack_len > 1:
             self.precompute_subtracks()
 
+    def _build_preprocess_path(self, idx) -> str:
+        operation = "classification" if self.classification else "regression"
+        path = os.path.normpath(
+            os.path.join(
+                self.preprocessed_data_folder, operation,self.name,
+                self.tracklist[self.cur_track]
+            )
+        )
+        create_folders(path)
+        return os.path.normpath(
+            os.path.join(
+                path, str(idx) + ".pkl"
+            )
+        )
     def precompute_subtracks(self):
         frames_per_track = []
         for track in self.tracklist:
@@ -498,6 +527,21 @@ class MotDataset(Dataset):
             raise IndexError(
                 f"At most {self.n_subtracks} subtracks of len {self.subtrack_len} can be created with slide {self.slide}.")
 
+        # Get the starting frame and track for this batch
+        starting_frame = self.start_frames[idx]
+        cur_track = self.tracks[idx]
+        ending_frame = starting_frame + self.subtrack_len
+
+        self.cur_track = cur_track
+        self.str_frame = starting_frame
+        self.end_frame = ending_frame
+
+        if self.preprocessed:
+            load_path = self._build_preprocess_path(idx)
+            with open(load_path, 'rb') as f:
+                tracklet_graph = pickle.load(f)
+            return tracklet_graph
+
         all_detections = []
         for track in self.tracklist:
             track_path = os.path.join(self.dataset_dir, self.split, track)
@@ -514,10 +558,7 @@ class MotDataset(Dataset):
             images_list = sorted([os.path.join(img_dir, img) for img in os.listdir(img_dir)])
             all_images += [images_list]
 
-        # Get the starting frame and track for this batch
-        starting_frame = self.start_frames[idx]
-        cur_track = self.tracks[idx]
-        ending_frame = starting_frame + self.subtrack_len
+
 
         logging.debug(f"From {starting_frame} to {ending_frame}")
         logging.debug(f"Starting in track: {cur_track}")
@@ -528,9 +569,7 @@ class MotDataset(Dataset):
         logging.info(
             f"Subtrack #{idx} | track {self.tracklist[cur_track]} {frames_window_msg}\r")
 
-        self.cur_track = cur_track
-        self.str_frame = starting_frame
-        self.end_frame = ending_frame
+
 
         track = MotTrack(detections=all_detections[cur_track][starting_frame:ending_frame],
                          images_list=all_images[cur_track][starting_frame:ending_frame],
@@ -544,11 +583,18 @@ class MotDataset(Dataset):
                          name=self.name + "/track_" + str(self.tracklist[cur_track]) + "/subtrack_" + str(idx))
 
         if self.dl_mode:
-            return build_graph(
+            graph = build_graph(
                 mps_fallback=self.mps_fallback,
                 device=self.device,
                 dtype=self.dtype,
                 knn_pruning_args=self.knn_pruning_args,
                 **track.get_data())
+            if self.preprocessing:
+                save_path = self._build_preprocess_path(idx)
+                with open(save_path, "wb") as f:
+                    pickle.dump(graph,f)
+                    return None
+            else:
+                return graph
         else:
             return track

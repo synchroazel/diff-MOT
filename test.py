@@ -103,11 +103,11 @@ parser.add_argument('--zero_threshold', default=.33,type=float, help="""Threshol
 TODO: describe how it works""")  # TODO
 parser.add_argument('--detection_gt_folder', default="gt", help="""detection ground truth folder""")
 parser.add_argument('--detection_gt_file', default="gt.txt", help="""detection ground truth folder""")
-parser.add_argument('--subtrack_len', default=20, type=int, help="""Length of the subtrack
+parser.add_argument('--subtrack_len', default=15, type=int, help="""Length of the subtrack
 NB: a value higher than 20 might require too much memory""")
 parser.add_argument('--linkage_window', default=5, type=int, help="""Linkage window for building the graph
 es: w 5 -> detections in frame 0 will connect to detections up to frame 5""")
-parser.add_argument('--slide', default=15, type=int, help="""Sliding window to adopt during testing
+parser.add_argument('--slide', default=10, type=int, help="""Sliding window to adopt during testing
 NB: suggested to be subtrack len - linkage window""")
 parser.add_argument('-k', '--knn', default=20, type=int, help="""K parameter for knn reduction
 NB: a value lower than 20 may exclude ground truths. Set to 0 for no knn""")
@@ -179,6 +179,8 @@ else:
     }
 # ---------------------------------------------------------------------------------------------------------------------
 
+classification = args.classification
+
 # %% Load the model
 model_path = os.path.normpath(os.path.join(saves_path, model_pkl))
 model = load_model_pkl(model_path, device=device).to(device)
@@ -202,7 +204,8 @@ mot_train_dl = MotDataset(dataset_path=dataset_path,
                           device=device,
                           mps_fallback=mps_fallback,
                           knn_pruning_args=knn_args,
-                          dtype=dtype)
+                          dtype=dtype,
+                          classification=classification)
 
 # %% Test the model
 test(model=model,
