@@ -18,7 +18,6 @@ from utilities import *
 logging.basicConfig(format='[%(levelname)s] %(message)s', level=logging.INFO)
 
 
-
 # TODO: fuse with previous train
 
 class MOTGraph(pyg_data.Data):
@@ -111,18 +110,18 @@ def build_graph(adjacency_list: torch.Tensor,
     # Gboxes = box_convert(detections_coords, "cxcywh", "xyxy")
     for egde in graph.edge_index.t():
         x.append(
-            ((2 * (detections_coords[egde[1], 0] - detections_coords[egde[0], 0])) /  #            2(xj - xi)
-             (detections_coords[egde[0],2] + detections_coords[egde[1],2])).item() #             wi + wj
+            ((2 * (detections_coords[egde[1], 0] - detections_coords[egde[0], 0])) /  # 2(xj - xi)
+             (detections_coords[egde[0], 2] + detections_coords[egde[1], 2])).item()  # wi + wj
         )
 
         y.append(
-            ((2 * (detections_coords[egde[0], 1] - detections_coords[egde[1], 1])) / #            2(yj - yi)
-             (detections_coords[egde[0], 3] + detections_coords[egde[1], 3])).item()  #               hi + hj
+            ((2 * (detections_coords[egde[0], 1] - detections_coords[egde[1], 1])) /  # 2(yj - yi)
+             (detections_coords[egde[0], 3] + detections_coords[egde[1], 3])).item()  # hi + hj
         )
 
         h.append(torch.log(detections_coords[egde[0], 2] / detections_coords[egde[1], 2]).item())  # log(hi/hj)
 
-        w.append(torch.log(detections_coords[egde[0],3] / detections_coords[egde[1],3]).item()) # log(wi/wj)
+        w.append(torch.log(detections_coords[egde[0], 3] / detections_coords[egde[1], 3]).item())  # log(wi/wj)
 
         # t.append((frame_times[egde[1]] - frame_times[egde[0]]).item() / frame_times[-1])
         t.append((frame_times[egde[1]] - frame_times[egde[0]]).item())
@@ -148,7 +147,7 @@ def build_graph(adjacency_list: torch.Tensor,
     weight_potencies = list(gt_dict.keys())
 
     if gt_dict is not None:
-        y = torch.zeros(len(graph.edge_attr)).to(device=device,dtype=dtype)
+        y = torch.zeros(len(graph.edge_attr)).to(device=device, dtype=dtype)
         for i, x in enumerate(graph.edge_index.t().tolist()):
             for potency in weight_potencies:
                 gt_list = gt_dict[potency]
@@ -189,7 +188,7 @@ class MotTrack:
         self.n_nodes = []
         self.dtype = dtype
         self.logging_lv = logging_lv
-        self.classification=classification
+        self.classification = classification
 
         logging.info(f"{self.n_frames} frames")
 
@@ -407,7 +406,7 @@ class MotDataset(Dataset):
                  device: torch.device = torch.device("cuda"),
                  dtype=torch.float32,
                  classification=False,
-                 preprocessing:bool = False,
+                 preprocessing: bool = False,
                  preprocessed: bool = True,
                  preprocessed_data_folder: str = 'preprocessed_data'
                  ):
@@ -470,7 +469,7 @@ class MotDataset(Dataset):
         operation = "classification" if self.classification else "regression"
         path = os.path.normpath(
             os.path.join(
-                self.preprocessed_data_folder, operation,self.name,
+                self.preprocessed_data_folder, operation, self.name,
                 self.tracklist[self.cur_track]
             )
         )
@@ -480,6 +479,7 @@ class MotDataset(Dataset):
                 path, str(idx) + ".pkl"
             )
         )
+
     def precompute_subtracks(self):
         frames_per_track = []
         for track in self.tracklist:
@@ -558,7 +558,8 @@ class MotDataset(Dataset):
             images_list = sorted([os.path.join(img_dir, img) for img in os.listdir(img_dir)])
             all_images += [images_list]
 
-
+        if self.frames_per_track[cur_track] - starting_frame < 15:
+            ending_frame = starting_frame + (self.frames_per_track[cur_track] - starting_frame)
 
         logging.debug(f"From {starting_frame} to {ending_frame}")
         logging.debug(f"Starting in track: {cur_track}")
@@ -568,8 +569,6 @@ class MotDataset(Dataset):
 
         logging.info(
             f"Subtrack #{idx} | track {self.tracklist[cur_track]} {frames_window_msg}\r")
-
-
 
         track = MotTrack(detections=all_detections[cur_track][starting_frame:ending_frame],
                          images_list=all_images[cur_track][starting_frame:ending_frame],
@@ -592,7 +591,7 @@ class MotDataset(Dataset):
             if self.preprocessing:
                 save_path = self._build_preprocess_path(idx)
                 with open(save_path, "wb") as f:
-                    pickle.dump(graph,f)
+                    pickle.dump(graph, f)
                     return None
             else:
                 return graph
