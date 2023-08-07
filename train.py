@@ -230,7 +230,7 @@ parser.add_argument('-B', '--backbone', default="resnet50",
                     help="Visual backbone for nodes feature extraction.")
 parser.add_argument('--float16', action='store_true',
                     help="Whether to use half floats or not.")
-parser.add_argument('--apple', action='store_true',
+parser.add_argument('--apple-silicon', action='store_true',
                     help="Whether a Mac with Apple Silicon is in use with MPS acceleration."
                          "(required for some fallbacks due to lack of MPS support)")
 parser.add_argument('-Z', '--node_model', action='store_true',
@@ -337,7 +337,7 @@ linkage_window = args.linkage_window
 
 # Device
 device = get_best_device()
-mps_fallback = args.apple  # Only if using MPS this should be true
+mps_fallback = args.apple_silicon  # Only if using MPS this should be true
 
 # Loss function
 alpha = args.alpha
