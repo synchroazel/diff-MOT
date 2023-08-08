@@ -1,10 +1,7 @@
 """
 Set of classes used to deal with datasets and tracks.
 """
-import pickle
 
-import numpy as np
-import torch
 import torch_geometric.data as pyg_data
 from PIL import Image
 from torch.utils.data import Dataset
@@ -12,6 +9,7 @@ from torch_geometric.transforms import KNNGraph
 from torchvision import transforms
 from torchvision.ops import box_convert
 from tqdm import tqdm
+
 from model import ImgEncoder
 from utilities import *
 
@@ -403,7 +401,7 @@ class MotDataset(Dataset):
                  dataset_path: str,
                  split: str,
                  detections_file_folder: str = "gt",
-                 detections_file_name: str = "MOT17-02-DPM.txt",
+                 detections_file_name: str = "gt.txt",
                  images_directory: str = "img1",
                  name: str = None,
                  det_resize: tuple = (70, 170),
