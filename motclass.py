@@ -12,7 +12,7 @@ from torch_geometric.transforms import KNNGraph
 from torchvision import transforms
 from torchvision.ops import box_convert
 from tqdm import tqdm
-
+from model import ImgEncoder
 from utilities import *
 
 logging.basicConfig(format='[%(levelname)s] %(message)s', level=logging.INFO)
@@ -99,7 +99,7 @@ def build_graph(adjacency_list: torch.Tensor,
             graph = graph.to('mps')
 
     # # once the graph is pruned, compute edge attributes
-    edge_attributes = torch.zeros(graph.edge_index.shape[1], 6).to(device)
+    edge_attributes = torch.zeros(graph.edge_index.shape[1], EDGE_FEATURES_DIM).to(device)
     # obtain info for each edge
     x = list()
     y = list()
@@ -123,8 +123,8 @@ def build_graph(adjacency_list: torch.Tensor,
 
         w.append(torch.log(detections_coords[egde[0], 3] / detections_coords[egde[1], 3]).item())  # log(wi/wj)
 
-        # t.append((frame_times[egde[1]] - frame_times[egde[0]]).item() / frame_times[-1])
-        t.append((frame_times[egde[1]] - frame_times[egde[0]]).item())
+        t.append((frame_times[egde[1]] - frame_times[egde[0]]).item() / frame_times[-1])
+        # t.append((frame_times[egde[1]] - frame_times[egde[0]]).item())
         # GIoU.append(
         #     generalized_box_iou(
         #         boxes1=Gboxes[egde[0],:].unsqueeze(0),
@@ -139,6 +139,13 @@ def build_graph(adjacency_list: torch.Tensor,
     edge_attributes[:, 3] = torch.tensor(w)
     # Time information
     edge_attributes[:, 4] = torch.tensor(t)
+
+    # difference in features
+    distance_matrix = torch.cdist(detections, detections, p=2)
+    for i, edge in enumerate(graph.edge_index):
+        # edge_attr[i,-1] = 1 / distance_matrix[edge[0],edge[1]] # ------> to have feature between 0 and 1 <------------
+        edge_attributes[i, -1] = distance_matrix[edge[0], edge[1]]
+    del distance_matrix
 
     graph.edge_attr = edge_attributes
     del x, y, h, w, t
@@ -172,7 +179,8 @@ class MotTrack:
                  dtype: torch.dtype = torch.float32,
                  logging_lv: int = logging.INFO,
                  name: str = "track",
-                 classification=False):
+                 classification=False,
+                 backbone:str = 'resnet50'):
 
         # Set logging level
         logging.getLogger().setLevel(logging_lv)
@@ -189,6 +197,7 @@ class MotTrack:
         self.dtype = dtype
         self.logging_lv = logging_lv
         self.classification = classification
+        self.backbone = ImgEncoder(model_name=backbone, dtype=dtype).to(device=device)
 
         logging.info(f"{self.n_frames} frames")
 
@@ -226,8 +235,10 @@ class MotTrack:
 
         track_detections_coords = torch.zeros((number_of_detections, 4), dtype=self.dtype).to(self.device)
         frame_times = torch.zeros((number_of_detections, 1), dtype=torch.int16).to(self.device)
-        flattened_node_features = torch.zeros((number_of_detections, channels, self.det_resize[1], self.det_resize[0]),
-                                              dtype=self.dtype).to(self.device)
+        image_container = torch.zeros((number_of_detections, channels, self.det_resize[1], self.det_resize[0]),
+                                      dtype=self.dtype).to(self.device)
+        node_features = torch.zeros((number_of_detections, self.backbone.output_dim),
+                                    dtype=self.dtype).to(self.device)
 
         # Process all frames images
         for image in pbar:
@@ -246,7 +257,7 @@ class MotTrack:
                 detection = detection.resize(self.det_resize)
                 detection = transforms.PILToTensor()(detection)
 
-                flattened_node_features[j, :, :, :] = detection
+                image_container[j, :, :, :] = detection
 
                 track_detections_coords[j, :] = torch.tensor(bbox)
                 frame_times[j, 0] = i
@@ -255,7 +266,8 @@ class MotTrack:
             # List with the number of nodes per frame (aka number of detections per frame)
             self.n_nodes.append(nodes)
             i += 1
-
+        with torch.no_grad():
+            node_features = self.backbone(image_container)
         """
         Node linkage
         """
@@ -303,7 +315,7 @@ class MotTrack:
 
         adjacency_list = torch.tensor(adjacency_list).to(torch.int16).to(self.device)
 
-        logging.info(f"{len(flattened_node_features)} total nodes")
+        logging.info(f"{len(node_features)} total nodes")
         logging.info(f"{len(adjacency_list)} total edges")
 
         """
@@ -379,7 +391,7 @@ class MotTrack:
         return {
             "adjacency_list": adjacency_list,
             "gt_dict": gt_dict,
-            "detections": flattened_node_features,
+            "detections": node_features,
             "frame_times": frame_times,
             "detections_coords": track_detections_coords
         }
@@ -408,7 +420,8 @@ class MotDataset(Dataset):
                  classification=False,
                  preprocessing: bool = False,
                  preprocessed: bool = True,
-                 preprocessed_data_folder: str = 'preprocessed_data'
+                 preprocessed_data_folder: str = 'preprocessed_data',
+                 feature_extraction_backbone:str = "resnet50"
                  ):
         self.dataset_dir = dataset_path
         self.split = split
@@ -436,6 +449,7 @@ class MotDataset(Dataset):
         self.preprocessed = preprocessed
         self.preprocessed_data_folder = preprocessed_data_folder
         self.preprocessing = preprocessing
+        self.backbone = feature_extraction_backbone
 
         if self.preprocessing:
             print("[INFO] Data loader set in preprocessing mode")
@@ -491,7 +505,7 @@ class MotDataset(Dataset):
         self.start_frames = []
         self.tracks = []
         for track, n_frames in enumerate(frames_per_track):
-            for start_frame in range(0, n_frames - self.subtrack_len + 1, self.slide):
+            for start_frame in range(0, n_frames - self.slide + 1, self.slide):
                 self.start_frames.append(start_frame)
                 self.tracks.append(track)
 
@@ -579,7 +593,8 @@ class MotDataset(Dataset):
                          device=self.device,
                          dtype=self.dtype,
                          logging_lv=logging.WARNING if self.dl_mode else logging.INFO,
-                         name=self.name + "/track_" + str(self.tracklist[cur_track]) + "/subtrack_" + str(idx))
+                         name=self.name + "/track_" + str(self.tracklist[cur_track]) + "/subtrack_" + str(idx),
+                         backbone=self.backbone)
 
         if self.dl_mode:
             graph = build_graph(

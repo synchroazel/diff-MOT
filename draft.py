@@ -26,25 +26,13 @@ data_loader = MotDataset(dataset_path='/media/dmmp/vid+backup/Data/MOT17',
                          dtype=torch.float32,
                          classification=True)
 
-# model = load_model_pkl("base_500_resnet50-backbone.pkl", device=device)  # regression
+#model = load_model_pkl("saves/models/timeaware_500_resnet50-backbone.pkl", device=device)  # regression
 # model.mps_fallback = True
 
-model = Net(backbone="ResNet50",
-            layer_tipe="base",
-            layer_size=500,
-            dtype=torch.float32,
-            edge_features_dim=6,
-            heads=6,
-            concat=False,
-            dropout=0.3,
-            add_self_loops=False,
-            steps=6,
-            device=device)
+#model.eval()
 
-model.eval()
-
-model = model.to(device)
-
+#model = model.to(device)
+model =None
 
 nodes_dict = {}  # frame, bbox
 id = 1
@@ -200,10 +188,11 @@ previous_track_idx = 0
 
 for _, data in tqdm(enumerate(data_loader), desc='[TQDM] Converting tracklet', total=data_loader.n_subtracks): # todo: explain track
     cur_track_idx = data_loader.cur_track
-    cur_track_name = data_loader.tracklist[data_loader.cur_track]
+
     if cur_track_idx != previous_track_idx and cur_track_idx != 0:
+        cur_track_name = data_loader.tracklist[previous_track_idx]
+        final_df.sort_values(by=['id', 'frame']).to_csv(cur_track_name + ".csv", index=False)
         previous_track_idx += 1
-        final_df.sort_values(by=['id', 'frame']).to_csv(cur_track_name + ".csv")
         # reset values
         nodes_dict = {}  # frame, bbox
         id = 1

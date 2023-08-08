@@ -1,6 +1,5 @@
-import logging
 import math
-from typing import Optional, Union
+from typing import Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
@@ -8,12 +7,24 @@ import torch_geometric.nn
 from efficientnet_pytorch import EfficientNet
 from torch import Tensor
 from torch import nn
-from torch_geometric.nn.dense.linear import Linear, Parameter
-from torch_geometric.typing import OptTensor, PairTensor, SparseTensor, Adj
-from torch_geometric.utils import add_self_loops, degree, softmax
-from torchvision import models
-from torch_geometric.nn.inits import glorot
-from torch_geometric.typing import Adj, Optional, OptPairTensor, OptTensor, Size
+from torch.nn import Parameter
+from torch_geometric.nn.conv import MessagePassing
+from torch_geometric.nn.dense.linear import Linear
+from torch_geometric.nn.inits import glorot, zeros
+from torch_geometric.typing import (
+    Adj,
+    OptTensor,
+    PairTensor,
+    SparseTensor,
+    torch_sparse,
+)
+from torch_geometric.utils import (
+    add_self_loops,
+    is_torch_sparse_tensor,
+    remove_self_loops,
+    softmax,
+)
+from torch_geometric.utils.sparse import set_sparse_value
 from torch_scatter import (
     scatter_sum,
     scatter_add,
@@ -26,17 +37,21 @@ from torch_scatter import (
     scatter_softmax,
     scatter_log_softmax
 )
-
+from torchvision import models
+from  utilities import *
 
 # TODO: capire come gestire la variabilità dei layers
 
+# ok
 class ImgEncoder(torch.nn.Module):
     def __init__(self, model_name: str, weights: str = "DEFAULT", dtype=torch.float32):
         super(ImgEncoder, self).__init__()
 
         self.model_name = model_name.lower()
         self.weights = 'DEFAULT'
+        self.output_dim = 2048
 
+        # TODO: set outdim
         if 'resnet' in self.model_name:
             self.model = getattr(models, self.model_name)(weights=weights)
             self.model = torch.nn.Sequential(*list(self.model.children())[:-1])
@@ -65,7 +80,7 @@ class ImgEncoder(torch.nn.Module):
             features = features.reshape(features.size(0), -1)
             return features
 
-
+# ok
 class EdgePredictorFromEdges(torch.nn.Module):
     def __init__(self, in_channels, hidden_channels):
         super().__init__()
@@ -76,15 +91,14 @@ class EdgePredictorFromEdges(torch.nn.Module):
         x = F.relu(self.lin1(edge_attr))
         x = F.dropout(x, training=self.training)
         x = self.lin2(x)
-        # x = torch.sigmoid(x)  # CLARIFY SIGMOID THING
         x = x.squeeze()
         return x
 
-
+# ok
 class EdgePredictorFromNodes(torch.nn.Module):
     def __init__(self, in_channels, hidden_channels):
         super().__init__()
-        self.lin1 = nn.Linear(4362, hidden_channels)
+        self.lin1 = nn.Linear(in_channels, hidden_channels)
         self.lin2 = nn.Linear(hidden_channels, 1)
 
     def forward(self, x_i, x_j):
@@ -93,13 +107,16 @@ class EdgePredictorFromNodes(torch.nn.Module):
         x = F.relu(self.lin1(x))
         x = F.dropout(x, training=self.training)
         x = self.lin2(x).squeeze()
-        # x = torch.sigmoid(x).squeeze()
         return x
 
-
+# ok
 class TransformerConvWithEdgeUpdate(torch_geometric.nn.TransformerConv):
-    def __init__(self, **kwargs):
+    def __init__(self,
+                 edge_model:bool=True,
+                 agg_future=None, agg_past=None, agg_base=None,
+                 **kwargs):
         super(TransformerConvWithEdgeUpdate, self).__init__(**kwargs)
+        self.edge_model = edge_model
 
     def message(self, query_i: Tensor, key_j: Tensor, value_j: Tensor,
                 edge_attr: OptTensor, index: Tensor, ptr: OptTensor,
@@ -126,7 +143,7 @@ class TransformerConvWithEdgeUpdate(torch_geometric.nn.TransformerConv):
         out = out * alpha.view(-1, self.heads, 1)
 
         #  ----> save edge attr <-----
-        self.__edge_attr__ = torch.mean(edge_attr, 1)  # TODO: should we put key instead?
+        self.__edge_attr__ = torch.mean(key_j, 1)
 
         return out
 
@@ -182,11 +199,14 @@ class TransformerConvWithEdgeUpdate(torch_geometric.nn.TransformerConv):
             # ------> MODIFIED HERE <---------
             edge_features = self.__edge_attr__
             self.__edge_attr__ = None
-            return out, edge_features
+            if self.edge_model:
+                return edge_features
+            else:
+                return out
 
 
-class EdgeModel(torch.nn.Module):
-    def __init__(self, n_features, n_edge_features, hiddens, n_targets, residuals):
+class BaseEdgeModel(torch.nn.Module):
+    def __init__(self, n_features, n_edge_features, hiddens, n_targets, residuals, **model_kwargs):
         super().__init__()
         self.residuals = residuals
         self.edge_mlp = nn.Sequential(
@@ -194,6 +214,7 @@ class EdgeModel(torch.nn.Module):
             nn.LeakyReLU(),
             nn.Linear(hiddens, n_targets),
         )
+        self.edge_model = True
 
     def forward(self, src, dest, edge_attr, u=None, batch=None):
         out = torch.cat([src, dest, edge_attr], 1)
@@ -204,7 +225,7 @@ class EdgeModel(torch.nn.Module):
 
 
 class TimeAwareNodeModel(torch.nn.Module):
-    def __init__(self, n_features, n_edge_features, hiddens, n_targets, residuals, agg_future, agg_past):
+    def __init__(self, n_features, n_edge_features, hiddens, n_targets, residuals, agg_future:str, agg_past:str, agg_base=None,):
         super(TimeAwareNodeModel, self).__init__()
         self.residuals = residuals
         self.node_mlp_future = nn.Sequential(
@@ -237,6 +258,7 @@ class TimeAwareNodeModel(torch.nn.Module):
             'softmax': scatter_softmax,
             'log_softmax': scatter_log_softmax,
         }
+        self.edge_model = False
 
     def forward(self, x, edge_index, edge_attr, u, batch):
         n1, n2 = edge_index
@@ -262,190 +284,353 @@ class TimeAwareNodeModel(torch.nn.Module):
         return out
 
 
-def build_custom_mp(n_target_nodes, n_target_edges, n_features, n_edge_features, layer_size, residuals, device="cuda"):
-    return torch_geometric.nn.MetaLayer(
-        edge_model=EdgeModel(n_features=n_features, n_edge_features=n_edge_features, hiddens=layer_size,
-                             n_targets=n_target_edges, residuals=residuals),
-        node_model=TimeAwareNodeModel(n_features=n_features, n_edge_features=n_target_edges, hiddens=layer_size,
-                                      n_targets=n_target_nodes, residuals=residuals,
-                                      agg_future='sum', agg_past='mean')
-    ).to(device=device)
+class GATv2ConvWithEdgeUpdate(MessagePassing):
 
-
-class GeneralConvWithEdgeUpdate(torch_geometric.nn.MessagePassing):
-    r"""A general GNN layer adapted from the `"Design Space for Graph Neural
-    Networks" <https://arxiv.org/abs/2011.08843>`_ paper."""
+    _alpha: OptTensor
 
     def __init__(
-            self,
-            in_channels: Union[int, tuple[int, int]],
-            out_channels: Optional[int],
-            in_edge_channels: int = None,
-            aggr: str = "add",
-            skip_linear: str = False,
-            directed_msg: bool = True,
-            heads: int = 1,
-            attention: bool = False,
-            attention_type: str = "additive",
-            l2_normalize: bool = False,
-            bias: bool = True,
-            device="cuda",
-            **kwargs,
+        self,
+        edge_model:bool = True,
+        agg_future=None, agg_past=None, agg_base:str='mean',
+            n_features:int=2048, n_edge_features:int=6, hiddens:int=256,
+            n_targets:int=256, residuals:bool=False, heads:int=6,
+        **kwargs,
     ):
-        kwargs.setdefault('aggr', aggr)
         super().__init__(node_dim=0, **kwargs)
 
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        self.in_edge_channels = in_edge_channels
-        self.aggr = aggr
-        self.skip_linear = skip_linear
-        self.directed_msg = directed_msg
+        self.in_channels = n_features
+        self.out_channels = n_targets
         self.heads = heads
-        self.attention = attention
-        self.attention_type = attention_type
-        self.normalize_l2 = l2_normalize
+        self.concat = False
+        self.negative_slope = 0.4
+        self.dropout = 0.3
+        self.add_self_loops = False
+        self.edge_dim = n_edge_features
+        self.fill_value = agg_base
 
-        if isinstance(in_channels, int):
-            in_channels = (in_channels, in_channels)
 
-        if self.directed_msg:
-            self.lin_msg = Linear(in_channels[0], out_channels * self.heads,
-                                  bias=bias).to(device)
-        else:
-            self.lin_msg = Linear(in_channels[0], out_channels * self.heads,
-                                  bias=bias).to(device)
-            self.lin_msg_i = Linear(in_channels[0], out_channels * self.heads,
-                                    bias=bias).to(device)
+        self.lin_l = Linear(self.in_channels, heads * self.out_channels,
+                            weight_initializer='glorot')
 
-        if self.skip_linear or self.in_channels != self.out_channels:
-            self.lin_self = Linear(in_channels[1], out_channels, bias=bias)
-        else:
-            self.lin_self = torch.nn.Identity()
+        self.lin_r = Linear(self.in_channels, heads * self.out_channels,
+                            weight_initializer='glorot')
 
-        if self.in_edge_channels is not None:
-            self.lin_edge = Linear(in_edge_channels, out_channels * self.heads,
-                                   bias=bias)
+        self.att = Parameter(torch.Tensor(1, heads, self.out_channels))
 
-        # TODO: A general torch_geometric.nn.AttentionLayer
-        if self.attention:
-            if self.attention_type == 'additive':
-                self.att_msg = Parameter(
-                    torch.Tensor(1, self.heads, self.out_channels))
-            elif self.attention_type == 'dot_product':
-                self.scaler = torch.sqrt(
-                    torch.tensor(out_channels, dtype=torch.float))
-            else:
-                raise ValueError(
-                    f"Attention type '{self.attention_type}' not supported")
+        self.lin_edge = Linear(self.edge_dim, heads * self.out_channels, bias=False,
+                               weight_initializer='glorot')
+
+        self.bias = Parameter(torch.Tensor(self.out_channels))
+
+        self._alpha = None
 
         self.reset_parameters()
 
     def reset_parameters(self):
         super().reset_parameters()
-        self.lin_msg.reset_parameters()
-        if hasattr(self.lin_self, 'reset_parameters'):
-            self.lin_self.reset_parameters()
-        if self.in_edge_channels is not None:
+        self.lin_l.reset_parameters()
+        self.lin_r.reset_parameters()
+        if self.lin_edge is not None:
             self.lin_edge.reset_parameters()
-        if self.attention and self.attention_type == 'additive':
-            glorot(self.att_msg)
+        glorot(self.att)
+        zeros(self.bias)
 
-    def forward(self, x: Union[Tensor, OptPairTensor], edge_index: Adj,
-                edge_attr: Tensor = None, size: Size = None) -> tuple[Tensor, Tensor]:
+    def forward(self, x: Union[Tensor, PairTensor], edge_index: Adj,
+                edge_attr: OptTensor = None,
+                return_attention_weights: bool = None):
+        # type: (Union[Tensor, PairTensor], Tensor, OptTensor, NoneType) -> Tensor  # noqa
+        # type: (Union[Tensor, PairTensor], SparseTensor, OptTensor, NoneType) -> Tensor  # noqa
+        # type: (Union[Tensor, PairTensor], Tensor, OptTensor, bool) -> Tuple[Tensor, Tuple[Tensor, Tensor]]  # noqa
+        # type: (Union[Tensor, PairTensor], SparseTensor, OptTensor, bool) -> Tuple[Tensor, SparseTensor]  # noqa
+        r"""Runs the forward pass of the module.
 
+        Args:
+            return_attention_weights (bool, optional): If set to :obj:`True`,
+                will additionally return the tuple
+                :obj:`(edge_index, attention_weights)`, holding the computed
+                attention weights for each edge. (default: :obj:`None`)
+        """
+        H, C = self.heads, self.out_channels
+
+        x_l: OptTensor = None
+        x_r: OptTensor = None
         if isinstance(x, Tensor):
-            x: OptPairTensor = (x, x)
-        x_self = x[1]
-        # propagate_type: (x: OptPairTensor)
-        out = self.propagate(edge_index, x=x, size=size, edge_attr=edge_attr)
-        out = out.mean(dim=1)  # todo: other approach to aggregate heads
-        out = out + self.lin_self(x_self)
-        if self.normalize_l2:
-            out = F.normalize(out, p=2, dim=-1)
-
-        #  ----> save edge attr <-----
-        edge_attr = self.__edge_attr__
-        self.__edge_attr__ = None
-
-        return out, edge_attr
-
-    def message_basic(self, x_i: Tensor, x_j: Tensor, edge_attr: OptTensor):
-        if self.directed_msg:
-            x_j = self.lin_msg(x_j)
-        else:
-            x_j = self.lin_msg(x_j) + self.lin_msg_i(x_i)
-        if edge_attr is not None:
-            lin_edge_attr = self.lin_edge(edge_attr)
-            x_j = x_j + lin_edge_attr
-            self.__edge_attr__ = lin_edge_attr
-        return x_j
-
-    def message(self, x_i: Tensor, x_j: Tensor, edge_index_i: Tensor,
-                size_i: Tensor, edge_attr: Tensor) -> Tensor:
-        x_j_out = self.message_basic(x_i, x_j, edge_attr)
-        x_j_out = x_j_out.view(-1, self.heads, self.out_channels)
-        if self.attention:
-            if self.attention_type == 'dot_product':
-                x_i_out = self.message_basic(x_j, x_i, edge_attr)
-                x_i_out = x_i_out.view(-1, self.heads, self.out_channels)
-                alpha = (x_i_out * x_j_out).sum(dim=-1) / self.scaler
+            assert x.dim() == 2
+            x_l = self.lin_l(x).view(-1, H, C)
+            if self.share_weights:
+                x_r = x_l
             else:
-                alpha = (x_j_out * self.att_msg).sum(dim=-1)
-            alpha = F.leaky_relu(alpha, negative_slope=0.2)
-            alpha = softmax(alpha, edge_index_i, num_nodes=size_i)
-            alpha = alpha.view(-1, self.heads, 1)
-            return x_j_out * alpha
+                x_r = self.lin_r(x).view(-1, H, C)
         else:
-            return x_j_out
+            x_l, x_r = x[0], x[1]
+            assert x[0].dim() == 2
+            x_l = self.lin_l(x_l).view(-1, H, C)
+            if x_r is not None:
+                x_r = self.lin_r(x_r).view(-1, H, C)
+
+        assert x_l is not None
+        assert x_r is not None
+
+        if self.add_self_loops:
+            if isinstance(edge_index, Tensor):
+                num_nodes = x_l.size(0)
+                if x_r is not None:
+                    num_nodes = min(num_nodes, x_r.size(0))
+                edge_index, edge_attr = remove_self_loops(
+                    edge_index, edge_attr)
+                edge_index, edge_attr = add_self_loops(
+                    edge_index, edge_attr, fill_value=self.fill_value,
+                    num_nodes=num_nodes)
+            elif isinstance(edge_index, SparseTensor):
+                if self.edge_dim is None:
+                    edge_index = torch_sparse.set_diag(edge_index)
+                else:
+                    raise NotImplementedError(
+                        "The usage of 'edge_attr' and 'add_self_loops' "
+                        "simultaneously is currently not yet supported for "
+                        "'edge_index' in a 'SparseTensor' form")
+
+        # propagate_type: (x: PairTensor, edge_attr: OptTensor)
+        out = self.propagate(edge_index, x=(x_l, x_r), edge_attr=edge_attr,
+                             size=None)
+
+        alpha = self._alpha
+        assert alpha is not None
+        self._alpha = None
+
+
+        out = out.mean(dim=1)
+
+        if self.bias is not None:
+            out = out + self.bias
+
+        if isinstance(return_attention_weights, bool):
+            if isinstance(edge_index, Tensor):
+                if is_torch_sparse_tensor(edge_index):
+                    # TODO TorchScript requires to return a tuple
+                    adj = set_sparse_value(edge_index, alpha)
+                    return out, (adj, alpha)
+                else:
+                    return out, (edge_index, alpha)
+            elif isinstance(edge_index, SparseTensor):
+                return out, edge_index.set_value(alpha, layout='coo')
+        else:
+            if self.edge_model:
+                edge_attr = self.__edge_attr__
+                self.__edge_attr__ = None
+                return edge_attr
+            else:
+                return out
+
+    def message(self, x_j: Tensor, x_i: Tensor, edge_attr: OptTensor,
+                index: Tensor, ptr: OptTensor,
+                size_i: Optional[int]) -> Tensor:
+        x = x_i + x_j
+
+        if edge_attr is not None:
+            if edge_attr.dim() == 1:
+                edge_attr = edge_attr.view(-1, 1)
+            assert self.lin_edge is not None
+            edge_attr = self.lin_edge(edge_attr)
+            edge_attr = edge_attr.view(-1, self.heads, self.out_channels)
+            x = x + edge_attr # ----> edges are updeted here <-----
+            self.__edge_attr__ = edge_attr
+
+        x = F.leaky_relu(x, self.negative_slope)
+        alpha = (x * self.att).sum(dim=-1)
+        alpha = softmax(alpha, index, ptr, size_i)
+        self._alpha = alpha
+        alpha = F.dropout(alpha, p=self.dropout, training=self.training)
+        return x_j * alpha.unsqueeze(-1)
+
+    def __repr__(self) -> str:
+        return (f'{self.__class__.__name__}({self.in_channels}, '
+                f'{self.out_channels}, heads={self.heads})')
+
+
+# todo: integrate aggregation in other models
+def build_custom_mp(n_target_nodes, n_target_edges, n_features, n_edge_features, layer_size, residuals, model_dict:dict,
+                    future_aggregation:str='sum', past_aggregation='mean',base_aggregation='sum',device="cuda"):
+    edge_model = model_dict['edge'](n_features=n_features, n_edge_features=n_edge_features, hiddens=layer_size,
+                                    n_targets=n_target_edges, residuals=residuals)
+    node_model = model_dict['node'](n_features=n_features, n_edge_features=n_target_edges, hiddens=layer_size,
+                                    n_targets=n_target_nodes, residuals=residuals,
+                                    agg_future=future_aggregation, agg_past=past_aggregation, agg_base = base_aggregation)
+    return torch_geometric.nn.MetaLayer(
+        edge_model=edge_model,
+        node_model=node_model
+    ).to(device=device)
+
+
+#class GeneralConvWithEdgeUpdate(torch_geometric.nn.MessagePassing):
+#     r"""A general GNN layer adapted from the `"Design Space for Graph Neural
+#     Networks" <https://arxiv.org/abs/2011.08843>`_ paper."""
+#
+#     def __init__(
+#             self,
+#             in_channels: Union[int, tuple[int, int]],
+#             out_channels: Optional[int],
+#             in_edge_channels: int = None,
+#             aggr: str = "add",
+#             skip_linear: str = False,
+#             directed_msg: bool = True,
+#             heads: int = 1,
+#             attention: bool = False,
+#             attention_type: str = "additive",
+#             l2_normalize: bool = False,
+#             bias: bool = True,
+#             device="cuda",
+#             edge_model: bool = True,
+#             **kwargs,
+#     ):
+#         kwargs.setdefault('aggr', aggr)
+#         super().__init__(node_dim=0, **kwargs)
+#
+#         self.in_channels = in_channels
+#         self.out_channels = out_channels
+#         self.in_edge_channels = in_edge_channels
+#         self.aggr = aggr
+#         self.skip_linear = skip_linear
+#         self.directed_msg = directed_msg
+#         self.heads = heads
+#         self.attention = attention
+#         self.attention_type = attention_type
+#         self.normalize_l2 = l2_normalize
+#         self.edge_model = edge_model
+#
+#         if isinstance(in_channels, int):
+#             in_channels = (in_channels, in_channels)
+#
+#         if self.directed_msg:
+#             self.lin_msg = Linear(in_channels[0], out_channels * self.heads,
+#                                   bias=bias).to(device)
+#         else:
+#             self.lin_msg = Linear(in_channels[0], out_channels * self.heads,
+#                                   bias=bias).to(device)
+#             self.lin_msg_i = Linear(in_channels[0], out_channels * self.heads,
+#                                     bias=bias).to(device)
+#
+#         if self.skip_linear or self.in_channels != self.out_channels:
+#             self.lin_self = Linear(in_channels[1], out_channels, bias=bias)
+#         else:
+#             self.lin_self = torch.nn.Identity()
+#
+#         if self.in_edge_channels is not None:
+#             self.lin_edge = Linear(in_edge_channels, out_channels * self.heads,
+#                                    bias=bias)
+#
+#         # TODO: A general torch_geometric.nn.AttentionLayer
+#         if self.attention:
+#             if self.attention_type == 'additive':
+#                 self.att_msg = Parameter(
+#                     torch.Tensor(1, self.heads, self.out_channels))
+#             elif self.attention_type == 'dot_product':
+#                 self.scaler = torch.sqrt(
+#                     torch.tensor(out_channels, dtype=torch.float))
+#             else:
+#                 raise ValueError(
+#                     f"Attention type '{self.attention_type}' not supported")
+#
+#         self.reset_parameters()
+#
+#     def reset_parameters(self):
+#         super().reset_parameters()
+#         self.lin_msg.reset_parameters()
+#         if hasattr(self.lin_self, 'reset_parameters'):
+#             self.lin_self.reset_parameters()
+#         if self.in_edge_channels is not None:
+#             self.lin_edge.reset_parameters()
+#         if self.attention and self.attention_type == 'additive':
+#             glorot(self.att_msg)
+#
+#     def forward(self, x: Union[Tensor, OptPairTensor], edge_index: Adj,
+#                 edge_attr: Tensor = None, size: Size = None) -> tuple[Tensor, Tensor]:
+#
+#         if isinstance(x, Tensor):
+#             x: OptPairTensor = (x, x)
+#         x_self = x[1]
+#         # propagate_type: (x: OptPairTensor)
+#         out = self.propagate(edge_index, x=x, size=size, edge_attr=edge_attr)
+#         out = out.mean(dim=1)  # todo: other approach to aggregate heads
+#         out = out + self.lin_self(x_self)
+#         if self.normalize_l2:
+#             out = F.normalize(out, p=2, dim=-1)
+#
+#         #  ----> save edge attr <-----
+#         edge_attr = self.__edge_attr__
+#         self.__edge_attr__ = None
+#
+#         if self.edge_model:
+#             return edge_attr
+#         else:
+#             return out
+#
+#     def message_basic(self, x_i: Tensor, x_j: Tensor, edge_attr: OptTensor):
+#         if self.directed_msg:
+#             x_j = self.lin_msg(x_j)
+#         else:
+#             x_j = self.lin_msg(x_j) + self.lin_msg_i(x_i)
+#         if edge_attr is not None:
+#             lin_edge_attr = self.lin_edge(edge_attr)
+#             x_j = x_j + lin_edge_attr
+#             self.__edge_attr__ = lin_edge_attr
+#         return x_j
+#
+#     def message(self, x_i: Tensor, x_j: Tensor, edge_index_i: Tensor,
+#                 size_i: Tensor, edge_attr: Tensor) -> Tensor:
+#         x_j_out = self.message_basic(x_i, x_j, edge_attr)
+#         x_j_out = x_j_out.view(-1, self.heads, self.out_channels)
+#         if self.attention:
+#             if self.attention_type == 'dot_product':
+#                 x_i_out = self.message_basic(x_j, x_i, edge_attr)
+#                 x_i_out = x_i_out.view(-1, self.heads, self.out_channels)
+#                 alpha = (x_i_out * x_j_out).sum(dim=-1) / self.scaler
+#             else:
+#                 alpha = (x_j_out * self.att_msg).sum(dim=-1)
+#             alpha = F.leaky_relu(alpha, negative_slope=0.2)
+#             alpha = softmax(alpha, edge_index_i, num_nodes=size_i)
+#             alpha = alpha.view(-1, self.heads, 1)
+#             return x_j_out * alpha
+#         else:
+#             return x_j_out
 
 
 class Net(torch.nn.Module):
-    # We should use only layers that support edge features
-    layer_aliases = {
-        'GATConv': torch_geometric.nn.GATConv,  # https://arxiv.org/abs/1710.10903
-        'GATv2Conv': torch_geometric.nn.GATv2Conv,  # https://arxiv.org/abs/2105.14491
-        'TransformerConv': TransformerConvWithEdgeUpdate,  # https://arxiv.org/abs/2009.03509
-        # 'GMMConv': torch_geometric.nn.GMMConv,  # https://arxiv.org/abs/1611.08402
-        # 'SplineConv': torch_geometric.nn.SplineConv,  # https://arxiv.org/abs/1711.08920
-        # 'NNConv': torch_geometric.nn.NNConv, # https://arxiv.org/abs/1704.01212
-        # 'CGConv': torch_geometric.nn.CGConv,  # https://journals.aps.org/prl/abstract/10.1103/PhysRevLett.120.145301
-        # 'PNAConv': torch_geometric.nn.PNAConv,  # https://arxiv.org/abs/2004.05718
-        'GENConv': torch_geometric.nn.GENConv,  # https://arxiv.org/abs/2006.07739
-        'GeneralConv': GeneralConvWithEdgeUpdate  # https://arxiv.org/abs/2011.08843
-    }
 
     def __init__(self,
-                 backbone,
+                 node_features_dim:int,
+                 model_dict: dict,
                  layer_size=256,
                  n_target_nodes=256,
                  n_target_edges=256,
                  steps=2,
-                 edge_features_dim=2,
-                 residuals=True,
-                 layer_tipe='TimeAware',
+                 edge_features_dim=EDGE_FEATURES_DIM,
+                 residuals: bool = True,
+                 past_aggregation:str="mean",
+                 future_aggregation:str='sum',
+                 base_aggregation:str='mean',
                  dtype=torch.float32,
                  mps_fallback=False,
                  device='cuda:0',
+                 is_edge_model: bool = True,
+                 used_backbone:str = 'resnet50',
                  **kwargs):
         super(Net, self).__init__()
-        self.fextractor = ImgEncoder(backbone, dtype=dtype)
-        self.layer_type = layer_tipe
         self.layer_size = layer_size
-        self.backbone = backbone
+        self.node_features_dim = node_features_dim
+        self.model_dict = model_dict
+        self.is_edge_model = is_edge_model
+        self.used_backbone = used_backbone
+        self.past_aggregation = past_aggregation
+        self.future_aggregation = future_aggregation
+        self.base_aggregation = base_aggregation
 
-        # self.conv_in = self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size, **kwargs)
-        # tODO: n_features
-        self.conv_in = build_custom_mp(n_target_nodes=n_target_nodes, n_target_edges=n_target_edges, n_features=2048, n_edge_features=edge_features_dim,
-                                       layer_size=layer_size, residuals=False, device=device)
+        self.conv_in = build_custom_mp(n_target_nodes=n_target_nodes, n_target_edges=n_target_edges, n_features=self.node_features_dim, n_edge_features=edge_features_dim,
+                                       layer_size=layer_size, residuals=residuals, device=device, model_dict=model_dict, future_aggregation=future_aggregation,
+                                       past_aggregation=past_aggregation, base_aggregation=base_aggregation)
 
         kwargs['edge_dim'] = layer_size
         kwargs['in_edge_channels'] = layer_size * kwargs['heads']
-
-        # for i in range(2, steps + 1):
-        #     layer = "self.conv" + str(
-        #         i) + " = self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size,**kwargs)"
-        #     exec(layer)
 
         self.number_of_message_passing_layers = steps
 
@@ -458,7 +643,10 @@ class Net(torch.nn.Module):
             )
 
         # self.predictor = EdgePredictor(layer_size, layer_size)
-        self.predictor = EdgePredictorFromEdges(in_channels=n_target_edges, hidden_channels=128)  # ??? HELP HERE
+        if is_edge_model:
+            self.predictor = EdgePredictorFromEdges(in_channels=n_target_edges, hidden_channels=layer_size)
+        else:
+            self.predictor = EdgePredictorFromNodes(in_channels=n_target_nodes, hidden_channels=layer_size)
         self.dtype = dtype
         self.device = device  # get the device the model is currently on
         self.mps_fallback = mps_fallback
@@ -471,17 +659,9 @@ class Net(torch.nn.Module):
     def forward(self, data) -> tuple:
 
         # Step 1 - Extract features from the image
-
-        data.x = self.fextractor(data.detections)
-        x, edge_index, edge_attr = data.x, data.edge_index, data.edge_attr
+        x, edge_index, edge_attr = data.detections, data.edge_index, data.edge_attr
         del data
 
-        # difference in features
-        distance_matrix = torch.cdist(x, x, p=2)
-        for i, edge in enumerate(edge_index.t()):
-            # edge_attr[i,-1] = 1 / distance_matrix[edge[0],edge[1]] # ------> to have feature between 0 and 1 <------------
-            edge_attr[i, -1] = distance_matrix[edge[0], edge[1]]
-        del distance_matrix
         # Step 2 - Enter the Message Passing layers
 
         # Fallback to CPU if device is MPS
@@ -492,12 +672,6 @@ class Net(torch.nn.Module):
             self.conv_in.to(torch.device('cpu'))
             for layer in self.conv:
                 layer.to(torch.device('cpu'))
-
-        # 2
-        # for i in range(1, self.number_of_message_passing_layers + 1):
-        #     message_passing = " self.conv" + str(
-        #         i) + "(x=x, edge_index=edge_index.to(torch.int64), edge_attr=edge_attr)"
-        #     x, edge_attr = eval(message_passing)
 
         x, edge_attr, _ = self.conv_in(x=x, edge_index=edge_index.to(torch.int64), edge_attr=edge_attr)
 
@@ -511,10 +685,77 @@ class Net(torch.nn.Module):
 
         # Use edge_index to find the corresponding node features in x
         x_i, x_j = x[edge_index[0].to(torch.int64)], x[edge_index[1].to(torch.int64)]
-
-        return self.predictor(edge_attr)
-
-        # return self.predictor(x_i, x_j)
+        if self.is_edge_model:
+            return self.predictor(edge_attr)
+        else:
+            return self.predictor(x_i, x_j)
 
     def __str__(self):
-        return self.layer_type.lower() + "_" + str(self.layer_size) + "_" + self.backbone + "-backbone"
+        model_type = "edge-predictor" if self.is_edge_model else "node-predictor"
+        node_model = "node-model-" + self.model_dict['node_name']
+        edge_model = "edge-model-" + self.model_dict['edge_name']
+        layer_size = 'layer-size-' + str(self.layer_size)
+        backbone = "backbone-" + self.used_backbone
+        if ('timeaware' in self.model_dict['node_name']) or ('timeaware' in self.model_dict['edge_name']):
+            aggregation = 'past-'+self.past_aggregation + "-future-"+ self.future_aggregation
+        else:
+            aggregation = 'aggregation-' + self.base_aggregation
+        name = '_'.join([model_type,node_model,edge_model,layer_size,backbone,aggregation])
+        return name
+
+IMPLEMENTED_MODELS = {
+    'timeaware':{
+        'node': TimeAwareNodeModel,
+        'edge': BaseEdgeModel,
+        'node_name':'timeaware',
+        'edge_name':'base'
+    },
+'transformer':{
+        'node': TransformerConvWithEdgeUpdate,
+        'edge': TransformerConvWithEdgeUpdate,
+        'node_name':'transformer',
+        'edge_name':'transformer'
+    },
+'attention':{
+        'node': GATv2ConvWithEdgeUpdate,
+        'edge': GATv2ConvWithEdgeUpdate,
+        'node_name':'attention',
+        'edge_name':'attention'
+    },
+  'timeaware+transformer':{
+        'node': TimeAwareNodeModel,
+        'edge': TransformerConvWithEdgeUpdate,
+        'node_name':'timeaware',
+        'edge_name':'transformer'
+    },
+'attention+transformer':{
+        'node': GATv2ConvWithEdgeUpdate,
+        'edge': TransformerConvWithEdgeUpdate,
+        'node_name':'attention',
+        'edge_name':'transformer'
+    },
+  'timeaware+attention':{
+        'node': TimeAwareNodeModel,
+        'edge': GATv2ConvWithEdgeUpdate,
+        'node_name':'timeaware',
+        'edge_name':'attention'
+    },
+'transformer+attention':{
+        'node': TransformerConvWithEdgeUpdate,
+        'edge': GATv2ConvWithEdgeUpdate,
+        'node_name':'transformer',
+        'edge_name':'attention'
+    },
+'transformer+base':{
+        'node': TransformerConvWithEdgeUpdate,
+        'edge': BaseEdgeModel,
+        'node_name':'transformer',
+        'edge_name':'base'
+    },
+'attention+base':{
+        'node': GATv2ConvWithEdgeUpdate,
+        'edge': BaseEdgeModel,
+        'node_name':'attention',
+        'edge_name':'base'
+    }
+}

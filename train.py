@@ -3,7 +3,7 @@ import argparse
 from torch_geometric.transforms import ToDevice
 from tqdm import tqdm
 
-from model import Net
+from model import Net, IMPLEMENTED_MODELS
 from motclass import MotDataset
 from utilities import *
 
@@ -203,8 +203,19 @@ NB: one seems to be more than enough. The model is updated every new track and o
 parser.add_argument('-n', '--layer_size', default=500, type=int, help="""Size of hidden layers""")
 parser.add_argument('-p', '--messages', default=6, type=int, help="""Number of message passing layers""")
 parser.add_argument('--heads', default=6, type=int, help="""Number of heads, when applicable""")
-parser.add_argument('--reduction', default="mean", help="""Reduction logic for the loss
+parser.add_argument('--loss_reduction', default="mean", help="""Reduction logic for the loss
 Implemented reductions: mean, sum""")
+parser.add_argument('--model', default="timeaware", help="""Model to train
+Implemented models: \n\ttimeaware, transformer, attention,
+\ttimeaware+transformer, attention+transformer
+\ttimeaware+attention, transformer+attention,
+\ttransformer+base, attention+base""")
+parser.add_argument('--past_aggregation', default="mean", help="""Aggregation logic (past) for time aware
+Implemented reductions: 'sum', 'add', 'mul', 'mean, 'min', 'max', 'std', 'logsumexp', 'softmax', 'log_softmax'""")
+parser.add_argument('--future_aggregation', default="sum", help="""Aggregation logic (future) for time aware
+Implemented reductions: 'sum', 'add', 'mul', 'mean, 'min', 'max', 'std', 'logsumexp', 'softmax', 'log_softmax'""")
+parser.add_argument('--aggregation', default="mean", help="""Aggregation logic for other layers
+Implemented reductions: 'mean', 'sum'""")
 parser.add_argument('-l', '--learning_rate', default=0.001, type=float, help="""learning rate""")
 parser.add_argument('--dropout', default=0.3, type=float, help="""dropout""")
 parser.add_argument('--optimizer', default="AdamW", help="""Optimizer to use
@@ -304,6 +315,8 @@ match loss_type:
 
 # %% Initialize the model
 
+network_dict = IMPLEMENTED_MODELS[args.model]
+
 model = Net(backbone=backbone,
             layer_tipe=layer_type,
             layer_size=l_size,
@@ -315,8 +328,8 @@ model = Net(backbone=backbone,
             dropout=args.dropout,
             add_self_loops=False,
             steps=messages,
-            device=device
-            )
+            device=device,
+            model_dict=network_dict)
 
 optimizer = args.optimizer
 optimizer = AVAILABLE_OPTIMIZERS[optimizer](model.parameters(), lr=learning_rate)
