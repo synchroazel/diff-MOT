@@ -156,6 +156,8 @@ def build_trajectory_rec(node_idx:int, pyg_graph, nx_graph, node_dists, nodes_to
                              depth=depth)
     return new_id
 
+# todo: cliargs
+outpath = "trackers/exp1/"
 
 def build_trajectories(graph, preds, ths=.33):
     global nodes_dict
@@ -191,7 +193,7 @@ for _, data in tqdm(enumerate(data_loader), desc='[TQDM] Converting tracklet', t
 
     if cur_track_idx != previous_track_idx and cur_track_idx != 0:
         cur_track_name = data_loader.tracklist[previous_track_idx]
-        final_df.sort_values(by=['id', 'frame']).to_csv(cur_track_name + ".csv", index=False)
+        final_df.sort_values(by=['id', 'frame']).drop_duplicates().to_csv(outpath+cur_track_name + ".txt", index=False, header=False)
         previous_track_idx += 1
         # reset values
         nodes_dict = {}  # frame, bbox

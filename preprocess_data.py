@@ -9,10 +9,10 @@ from utilities import *
 
 # todo: cli args
 
-dataset = "MOT17"
+dataset = "MOT20"
 classification=True
 
-data_loader = MotDataset(dataset_path="/media/dmmp/vid+backup/Data/MOT17",
+data_loader = MotDataset(dataset_path="/media/dmmp/vid+backup/Data/MOT20",
                          split="train",
                          subtrack_len=15,
                          slide=10,

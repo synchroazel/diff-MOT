@@ -3,7 +3,7 @@ import argparse
 from torch_geometric.transforms import ToDevice
 from tqdm import tqdm
 
-from model import Net, IMPLEMENTED_MODELS
+from model import Net, IMPLEMENTED_MODELS, ImgEncoder
 from motclass import MotDataset
 from utilities import *
 
@@ -241,6 +241,10 @@ parser.add_argument('--classification', action='store_true',
                     help="""Work in classification setting instead of regression""")
 args = parser.parse_args()
 
+# todo remove
+args.classification = True
+args.loss_function = "focal"
+
 # there was no preconception of what to do  -cit.
 classification = args.classification
 
@@ -294,7 +298,7 @@ mps_fallback = args.apple  # Only if using MPS this should be true
 alpha = args.alpha
 delta = args.delta
 gamma = args.gamma
-reduction = args.reduction
+reduction = args.loss_reduction
 loss_type = args.loss_function
 loss_not_initialized = False
 match loss_type:
@@ -313,26 +317,7 @@ match loss_type:
         raise NotImplemented(
             "The chosen loss: " + loss_type + " has not been implemented yet. To see the available ones, run this script with the -h option")
 
-# %% Initialize the model
 
-network_dict = IMPLEMENTED_MODELS[args.model]
-
-model = Net(backbone=backbone,
-            layer_tipe=layer_type,
-            layer_size=l_size,
-            dtype=dtype,
-            mps_fallback=mps_fallback,
-            edge_features_dim=EDGE_FEATURES_DIM,
-            heads=heads,
-            concat=False,
-            dropout=args.dropout,
-            add_self_loops=False,
-            steps=messages,
-            device=device,
-            model_dict=network_dict)
-
-optimizer = args.optimizer
-optimizer = AVAILABLE_OPTIMIZERS[optimizer](model.parameters(), lr=learning_rate)
 
 # %% Set up the dataloader
 
@@ -366,6 +351,32 @@ mot_val_dl = MotDataset(dataset_path=val_dataset_path,
                         dtype=dtype,
                         mps_fallback=mps_fallback,
                         classification=classification)
+
+network_dict = IMPLEMENTED_MODELS[args.model]
+
+model = Net(backbone=backbone,
+            layer_tipe=layer_type,
+            layer_size=l_size,
+            dtype=dtype,
+            mps_fallback=mps_fallback,
+            edge_features_dim=EDGE_FEATURES_DIM,
+            heads=heads,
+            concat=False,
+            dropout=args.dropout,
+            add_self_loops=False,
+            steps=messages,
+            device=device,
+            model_dict=network_dict,
+            node_features_dim=ImgEncoder.output_dims[backbone])
+
+# %% Initialize the model
+
+network_dict = IMPLEMENTED_MODELS[args.model]
+
+optimizer = args.optimizer
+optimizer = AVAILABLE_OPTIMIZERS[optimizer](model.parameters(), lr=learning_rate)
+
+
 # print info
 print("[INFO] hyper parameters:")
 print("\nDatasets:")

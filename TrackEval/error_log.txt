@@ -4684,3 +4684,38 @@ trackeval.utils.TrackEvalException: File MOT17-02-DPM.txt cannot be read because
 
 
 
+MotChallenge2DBox
+trackers
+multiprocessing.pool.RemoteTraceback: 
+"""
+Traceback (most recent call last):
+  File "/usr/lib/python3.10/multiprocessing/pool.py", line 125, in worker
+    result = (True, func(*args, **kwds))
+  File "/usr/lib/python3.10/multiprocessing/pool.py", line 48, in mapstar
+    return list(map(*args))
+  File "/home/dmmp/tesi/diff-MOT/TrackEval/trackeval/_timing.py", line 64, in wrap
+    return f(*args, **kw)
+  File "/home/dmmp/tesi/diff-MOT/TrackEval/trackeval/eval.py", line 195, in eval_sequence
+    data = dataset.get_preprocessed_seq_data(raw_data, cls)
+  File "/home/dmmp/tesi/diff-MOT/TrackEval/trackeval/_timing.py", line 64, in wrap
+    return f(*args, **kw)
+  File "/home/dmmp/tesi/diff-MOT/TrackEval/trackeval/datasets/mot_challenge_2d_box.py", line 354, in get_preprocessed_seq_data
+    raise TrackEvalException(
+trackeval.utils.TrackEvalException: Evaluation is only valid for pedestrian class. Non pedestrian class (9) found in sequence MOT17-02-DPM at timestep 0.
+"""
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/dmmp/tesi/diff-MOT/TrackEval/trackeval/eval.py", line 81, in evaluate
+    results = pool.map(_eval_sequence, seq_list)
+  File "/usr/lib/python3.10/multiprocessing/pool.py", line 367, in map
+    return self._map_async(func, iterable, mapstar, chunksize).get()
+  File "/usr/lib/python3.10/multiprocessing/pool.py", line 774, in get
+    raise self._value
+trackeval.utils.TrackEvalException: Evaluation is only valid for pedestrian class. Non pedestrian class (9) found in sequence MOT17-02-DPM at timestep 0.
+
+
+
+
+

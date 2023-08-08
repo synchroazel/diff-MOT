@@ -102,7 +102,7 @@ TODO: describe how it works""")  # TODO
 parser.add_argument('--zero_threshold', default=.33,type=float, help="""Threshold to transform a weight to 0
 TODO: describe how it works""")  # TODO
 parser.add_argument('--detection_gt_folder', default="gt", help="""detection ground truth folder""")
-parser.add_argument('--detection_gt_file', default="gt.txt", help="""detection ground truth folder""")
+parser.add_argument('--detection_gt_file', default="MOT17-02-DPM.txt", help="""detection ground truth folder""")
 parser.add_argument('--subtrack_len', default=15, type=int, help="""Length of the subtrack
 NB: a value higher than 20 might require too much memory""")
 parser.add_argument('--linkage_window', default=5, type=int, help="""Linkage window for building the graph

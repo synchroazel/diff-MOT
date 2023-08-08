@@ -46,7 +46,7 @@ def evaluate_mot17(tracker_path, split, data_path, tracker_sub_folder, output_su
     Evaluate MOT17 using TrackEval toolkit
     """
     # tracker_display_name = 'HICL-Tracker'
-    # --GT_LOC_FORMAT / home / ocetintas / Desktop / Projects / datasets / MOT17 / train / {seq} / gt / gt.txt DONE
+    # --GT_LOC_FORMAT / home / ocetintas / Desktop / Projects / datasets / MOT17 / train / {seq} / gt / MOT17-02-DPM.txt DONE
     # --TIME_PROGRESS False
 
     default_eval_config = trackeval.Evaluator.get_default_eval_config()
@@ -99,7 +99,7 @@ def evaluate_mot17_with_logs(tracker_path, split, data_path, tracker_sub_folder,
     Evaluate MOT17 using TrackEval toolkit
     """
     # tracker_display_name = 'HICL-Tracker'
-    # --GT_LOC_FORMAT / home / ocetintas / Desktop / Projects / datasets / MOT17 / train / {seq} / gt / gt.txt DONE
+    # --GT_LOC_FORMAT / home / ocetintas / Desktop / Projects / datasets / MOT17 / train / {seq} / gt / MOT17-02-DPM.txt DONE
     # --TIME_PROGRESS False
 
     default_eval_config = trackeval.Evaluator.get_default_eval_config()

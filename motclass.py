@@ -403,7 +403,7 @@ class MotDataset(Dataset):
                  dataset_path: str,
                  split: str,
                  detections_file_folder: str = "gt",
-                 detections_file_name: str = "gt.txt",
+                 detections_file_name: str = "MOT17-02-DPM.txt",
                  images_directory: str = "img1",
                  name: str = None,
                  det_resize: tuple = (70, 170),
@@ -483,7 +483,7 @@ class MotDataset(Dataset):
         operation = "classification" if self.classification else "regression"
         path = os.path.normpath(
             os.path.join(
-                self.preprocessed_data_folder, operation, self.name,
+                self.preprocessed_data_folder, operation, self.name,self.backbone,
                 self.tracklist[self.cur_track]
             )
         )
