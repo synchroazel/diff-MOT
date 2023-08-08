@@ -1,4 +1,5 @@
 import argparse
+import random
 
 from torch_geometric.transforms import ToDevice
 from tqdm import tqdm
@@ -119,10 +120,10 @@ def train(model, train_loader, val_loader, loss_function, optimizer, epochs, dev
             torch.nn.utils.clip_grad_norm_(model.parameters(), 100)
 
             pbar_dl.update(1)
-
+            id_validate = random.choice(range(0, val_loader.n_subtracks))
             """ Validation step """
             val_loss, acc_ones, acc_zeros, zeros_as_ones, ones_as_zeros = single_validate(model=model,
-                                                                                          val_loader=val_loader, idx=i,
+                                                                                          val_loader=val_loader, idx=id_validate,
                                                                                           loss_function=loss_function,
                                                                                           device=device,
                                                                                           loss_not_initialized=loss_not_initialized,
@@ -206,10 +207,7 @@ parser.add_argument('--heads', default=6, type=int, help="""Number of heads, whe
 parser.add_argument('--loss_reduction', default="mean", help="""Reduction logic for the loss
 Implemented reductions: mean, sum""")
 parser.add_argument('--model', default="timeaware", help="""Model to train
-Implemented models: \n\ttimeaware, transformer, attention,
-\ttimeaware+transformer, attention+transformer
-\ttimeaware+attention, transformer+attention,
-\ttransformer+base, attention+base""")
+Implemented models: \n\ttimeaware, transformer, attention""")
 parser.add_argument('--past_aggregation', default="mean", help="""Aggregation logic (past) for time aware
 Implemented reductions: 'sum', 'add', 'mul', 'mean, 'min', 'max', 'std', 'logsumexp', 'softmax', 'log_softmax'""")
 parser.add_argument('--future_aggregation', default="sum", help="""Aggregation logic (future) for time aware
@@ -220,19 +218,19 @@ parser.add_argument('-l', '--learning_rate', default=0.001, type=float, help="""
 parser.add_argument('--dropout', default=0.3, type=float, help="""dropout""")
 parser.add_argument('--optimizer', default="AdamW", help="""Optimizer to use
 TODO: put available optimizers""")  # TODO
-parser.add_argument('--alpha', default=0.95, type=float, help="""Alpha parameter for the focal loss
+parser.add_argument('--alpha', default=0.05, type=float, help="""Alpha parameter for the focal loss
 TODO: describe how it works""")  # TODO
-parser.add_argument('--gamma', default=2., type=float, help="""Gamma parameter for the focal loss
+parser.add_argument('--gamma', default=5., type=float, help="""Gamma parameter for the focal loss
 TODO: describe how it works""")  # TODO
 parser.add_argument('--delta', default=.4, type=float, help="""Delta parameter for the huber loss
 TODO: describe how it works""")  # TODO
 parser.add_argument('--detection_gt_folder', default="gt", help="""detection ground truth folder""")
 parser.add_argument('--detection_gt_file', default="gt.txt", help="""detection ground truth folder""")
-parser.add_argument('--subtrack_len', default=20, type=int, help="""Length of the subtrack
+parser.add_argument('--subtrack_len', default=15, type=int, help="""Length of the subtrack
 NB: a value higher than 20 might require too much memory""")
 parser.add_argument('--linkage_window', default=5, type=int, help="""Linkage window for building the graph
 es: w 5 -> detections in frame 0 will connect to detections up to frame 5""")
-parser.add_argument('--slide', default=15, type=int, help="""Sliding window to adopt during testing
+parser.add_argument('--slide', default=10, type=int, help="""Sliding window to adopt during testing
 NB: suggested to be subtrack len - linkage window""")
 parser.add_argument('-k', '--knn', default=20, type=int, help="""K parameter for knn reduction
 NB: a value lower than 20 may exclude ground truths. Set to 0 for no knn""")
@@ -241,9 +239,12 @@ parser.add_argument('--classification', action='store_true',
                     help="""Work in classification setting instead of regression""")
 args = parser.parse_args()
 
-# todo remove
-args.classification = True
-args.loss_function = "focal"
+# todo remove, used only for debug
+# -------------------------------------------------------------------------------------------------------------------
+# args.classification = True
+# args.loss_function = "focal"
+# -------------------------------------------------------------------------------------------------------------------
+
 
 # there was no preconception of what to do  -cit.
 classification = args.classification
@@ -367,7 +368,8 @@ model = Net(backbone=backbone,
             steps=messages,
             device=device,
             model_dict=network_dict,
-            node_features_dim=ImgEncoder.output_dims[backbone])
+            node_features_dim=ImgEncoder.output_dims[backbone],
+            is_edge_model=not args.node_model)
 
 # %% Initialize the model
 
@@ -398,7 +400,11 @@ print("\tbackbone: " + backbone + "\n\t" +
       "number of edge features: " + str(EDGE_FEATURES_DIM) + "\n\t" +
       "dropout: " + str(args.dropout) + "\n"
       )
-
+print("\n Prediction based on:")
+if args.node_model:
+    print('\tNodes\n')
+else:
+    print('Edges\n')
 print("Training:")
 print("\tLoss function: " + loss_type)
 print("\tOptimizer: " + args.optimizer)

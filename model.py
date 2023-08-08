@@ -103,7 +103,7 @@ class EdgePredictorFromEdges(torch.nn.Module):
 class EdgePredictorFromNodes(torch.nn.Module):
     def __init__(self, in_channels, hidden_channels):
         super().__init__()
-        self.lin1 = nn.Linear(in_channels, hidden_channels)
+        self.lin1 = nn.Linear(in_channels * 2, hidden_channels)
         self.lin2 = nn.Linear(hidden_channels, 1)
 
     def forward(self, x_i, x_j):
@@ -349,10 +349,10 @@ class GATv2ConvWithEdgeUpdate(MessagePassing):
     def forward(self, x: Union[Tensor, PairTensor], edge_index: Adj,
                 edge_attr: OptTensor = None,
                 return_attention_weights: bool = None):
-        # type: (Union[Tensor, PairTensor], Tensor, OptTensor, NoneType) -> Tensor  # noqa
-        # type: (Union[Tensor, PairTensor], SparseTensor, OptTensor, NoneType) -> Tensor  # noqa
-        # type: (Union[Tensor, PairTensor], Tensor, OptTensor, bool) -> Tuple[Tensor, Tuple[Tensor, Tensor]]  # noqa
-        # type: (Union[Tensor, PairTensor], SparseTensor, OptTensor, bool) -> Tuple[Tensor, SparseTensor]  # noqa
+        #£ type: (Union[Tensor, PairTensor], Tensor, OptTensor, NoneType) -> Tensor  # noqa
+        #£ type: (Union[Tensor, PairTensor], SparseTensor, OptTensor, NoneType) -> Tensor  # noqa
+        #£ type: (Union[Tensor, PairTensor], Tensor, OptTensor, bool) -> Tuple[Tensor, Tuple[Tensor, Tensor]]  # noqa
+        #£ type: (Union[Tensor, PairTensor], SparseTensor, OptTensor, bool) -> Tuple[Tensor, SparseTensor]  # noqa
         r"""Runs the forward pass of the module.
 
         Args:
@@ -447,7 +447,8 @@ def build_custom_mp(n_target_nodes, n_target_edges, n_features, n_edge_features,
                                     n_targets=n_target_edges, residuals=residuals)
     node_model = model_dict['node'](n_features=n_features, n_edge_features=n_target_edges, hiddens=layer_size,
                                     n_targets=n_target_nodes, residuals=residuals,
-                                    agg_future=future_aggregation, agg_past=past_aggregation, agg_base = base_aggregation)
+                                    agg_future=future_aggregation, agg_past=past_aggregation, agg_base=base_aggregation) #,
+                                    # in_channels=n_features, out_channels=layer_size)
     return torch_geometric.nn.MetaLayer(
         edge_model=edge_model,
         node_model=node_model
