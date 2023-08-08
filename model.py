@@ -42,7 +42,7 @@ from  utilities import *
 
 # TODO: capire come gestire la variabilità dei layers
 
-# ok
+
 class ImgEncoder(torch.nn.Module):
     output_dims = {
         'resnet50': 2048
@@ -85,7 +85,7 @@ class ImgEncoder(torch.nn.Module):
             features = features.reshape(features.size(0), -1)
             return features
 
-# ok
+
 class EdgePredictorFromEdges(torch.nn.Module):
     def __init__(self, in_channels, hidden_channels):
         super().__init__()
@@ -99,7 +99,7 @@ class EdgePredictorFromEdges(torch.nn.Module):
         x = x.squeeze()
         return x
 
-# ok
+
 class EdgePredictorFromNodes(torch.nn.Module):
     def __init__(self, in_channels, hidden_channels):
         super().__init__()
@@ -129,10 +129,10 @@ class TransformerConvWithEdgeUpdate(torch_geometric.nn.TransformerConv):
         # same code as og class
 
         if self.lin_edge is not None:
-            assert edge_attr is not None
-            # ----> edges are updeted here <-----
-            edge_attr = self.lin_edge(edge_attr).view(-1, self.heads,
-                                                      self.out_channels)
+            #     assert edge_attr is not None
+            #     # ----> edges are updeted here <-----
+            #     edge_attr = self.lin_edge(edge_attr).view(-1, self.heads,
+            #                                               self.out_channels)
             key_j = key_j + edge_attr
 
         alpha = (query_i * key_j).sum(dim=-1) / math.sqrt(self.out_channels)
@@ -233,7 +233,8 @@ class BaseEdgeModel(torch.nn.Module):
 
 
 class TimeAwareNodeModel(torch.nn.Module):
-    def __init__(self, n_features, n_edge_features, hiddens, n_targets, residuals, agg_future:str, agg_past:str, agg_base=None,):
+    def __init__(self, n_features, n_edge_features, hiddens, n_targets, residuals, agg_future: str, agg_past: str,
+                 agg_base=None, ):
         super(TimeAwareNodeModel, self).__init__()
         self.residuals = residuals
         self.node_mlp_future = nn.Sequential(
@@ -271,17 +272,21 @@ class TimeAwareNodeModel(torch.nn.Module):
     def forward(self, x, edge_index, edge_attr, u, batch):
         n1, n2 = edge_index
 
-        future_mask = n1 < n2
-        future_n1, future_n2 = n1[future_mask], n2[future_mask]
-        future_in = torch.cat([x[future_n2], edge_attr[future_mask]], dim=1)
+        # future_mask = n1 < n2
+        # future_n1, future_n2 = n1[future_mask], n2[future_mask]
+        # future_in = torch.cat([x[future_n2], edge_attr[future_mask]], dim=1)
+        future_in = torch.cat([x[n2], edge_attr], dim=1)
         future_out = self.node_mlp_future(future_in)
-        future_out = self.agg_function[self.agg_future](future_out, future_n1, dim=0, dim_size=x.size(0))
+        # future_out = self.agg_function[self.agg_future](future_out, future_n1, dim=0, dim_size=x.size(0))
+        future_out = self.agg_function[self.agg_future](future_out, n1, dim=0, dim_size=x.size(0))
 
-        past_mask = n1 > n2
-        past_n1, past_n2 = n1[past_mask], n2[past_mask]
-        past_in = torch.cat([x[past_n2], edge_attr[past_mask]], dim=1)
+        # past_mask = n1 > n2
+        # past_n1, past_n2 = n1[past_mask], n2[past_mask]
+        # past_in = torch.cat([x[past_n2], edge_attr[past_mask]], dim=1)
+        past_in = torch.cat([x[n1], edge_attr], dim=1)
         past_out = self.node_mlp_past(past_in)
-        past_out = self.agg_function[self.agg_past](past_out, past_n1, dim=0, dim_size=x.size(0))
+        # past_out = self.agg_function[self.agg_past](past_out, past_n1, dim=0, dim_size=x.size(0))
+        past_out = self.agg_function[self.agg_past](past_out, n2, dim=0, dim_size=x.size(0))
 
         flow = torch.cat((past_out, future_out), dim=1)
 
@@ -328,9 +333,6 @@ class GATv2ConvWithEdgeUpdate(MessagePassing):
 
         self.att = Parameter(torch.Tensor(1, heads, self.out_channels))
 
-        self.lin_edge = Linear(self.edge_dim, heads * self.out_channels, bias=False,
-                               weight_initializer='glorot')
-
         self.bias = Parameter(torch.Tensor(self.out_channels))
 
         self._alpha = None
@@ -341,8 +343,6 @@ class GATv2ConvWithEdgeUpdate(MessagePassing):
         super().reset_parameters()
         self.lin_l.reset_parameters()
         self.lin_r.reset_parameters()
-        if self.lin_edge is not None:
-            self.lin_edge.reset_parameters()
         glorot(self.att)
         zeros(self.bias)
 
@@ -382,25 +382,6 @@ class GATv2ConvWithEdgeUpdate(MessagePassing):
         assert x_l is not None
         assert x_r is not None
 
-        if self.add_self_loops:
-            if isinstance(edge_index, Tensor):
-                num_nodes = x_l.size(0)
-                if x_r is not None:
-                    num_nodes = min(num_nodes, x_r.size(0))
-                edge_index, edge_attr = remove_self_loops(
-                    edge_index, edge_attr)
-                edge_index, edge_attr = add_self_loops(
-                    edge_index, edge_attr, fill_value=self.fill_value,
-                    num_nodes=num_nodes)
-            elif isinstance(edge_index, SparseTensor):
-                if self.edge_dim is None:
-                    edge_index = torch_sparse.set_diag(edge_index)
-                else:
-                    raise NotImplementedError(
-                        "The usage of 'edge_attr' and 'add_self_loops' "
-                        "simultaneously is currently not yet supported for "
-                        "'edge_index' in a 'SparseTensor' form")
-
         # propagate_type: (x: PairTensor, edge_attr: OptTensor)
         out = self.propagate(edge_index, x=(x_l, x_r), edge_attr=edge_attr,
                              size=None)
@@ -439,11 +420,11 @@ class GATv2ConvWithEdgeUpdate(MessagePassing):
         x = x_i + x_j
 
         if edge_attr is not None:
-            if edge_attr.dim() == 1:
-                edge_attr = edge_attr.view(-1, 1)
-            assert self.lin_edge is not None
-            edge_attr = self.lin_edge(edge_attr)
-            edge_attr = edge_attr.view(-1, self.heads, self.out_channels)
+        #     if edge_attr.dim() == 1:
+        #         edge_attr = edge_attr.view(-1, 1)
+        #     assert self.lin_edge is not None
+        #     edge_attr = self.lin_edge(edge_attr)
+        #     edge_attr = edge_attr.view(-1, self.heads, self.out_channels)
             x = x + edge_attr # ----> edges are updeted here <-----
             self.__edge_attr__ = edge_attr
 
@@ -591,47 +572,11 @@ IMPLEMENTED_MODELS = {
     },
 'transformer':{
         'node': TransformerConvWithEdgeUpdate,
-        'edge': TransformerConvWithEdgeUpdate,
-        'node_name':'transformer',
-        'edge_name':'transformer'
-    },
-'attention':{
-        'node': GATv2ConvWithEdgeUpdate,
-        'edge': GATv2ConvWithEdgeUpdate,
-        'node_name':'attention',
-        'edge_name':'attention'
-    },
-  'timeaware+transformer':{
-        'node': TimeAwareNodeModel,
-        'edge': TransformerConvWithEdgeUpdate,
-        'node_name':'timeaware',
-        'edge_name':'transformer'
-    },
-'attention+transformer':{
-        'node': GATv2ConvWithEdgeUpdate,
-        'edge': TransformerConvWithEdgeUpdate,
-        'node_name':'attention',
-        'edge_name':'transformer'
-    },
-  'timeaware+attention':{
-        'node': TimeAwareNodeModel,
-        'edge': GATv2ConvWithEdgeUpdate,
-        'node_name':'timeaware',
-        'edge_name':'attention'
-    },
-'transformer+attention':{
-        'node': TransformerConvWithEdgeUpdate,
-        'edge': GATv2ConvWithEdgeUpdate,
-        'node_name':'transformer',
-        'edge_name':'attention'
-    },
-'transformer+base':{
-        'node': TransformerConvWithEdgeUpdate,
         'edge': BaseEdgeModel,
         'node_name':'transformer',
         'edge_name':'base'
     },
-'attention+base':{
+'attention':{
         'node': GATv2ConvWithEdgeUpdate,
         'edge': BaseEdgeModel,
         'node_name':'attention',
