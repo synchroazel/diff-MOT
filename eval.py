@@ -11,14 +11,14 @@ if __name__ == '__main__':
                         help='The name of the seqmap containing the list of tracks to evaluate.\n'
                              'All seqmaps for MOTX are assumed to be in MOTX/seqmaps.')
 
-    parser.add_argument('--data_path', type=str, default='data',
+    parser.add_argument('--data_path', type=str, default='/media/dmmp/vid+backup/Data',
                         help='Path to the folder containing all datasets.')
 
     parser.add_argument('--output_path', type=str, default='output',
                         help='Path to the folder where the results will be saved.')
 
     # Not really sure of its role
-    parser.add_argument('--tracker_sub_folder', type=str, default='',
+    parser.add_argument('--tracker_sub_folder', type=str, default='exp1',
                         help='Subfolder of tracker_path where the tracker files are located.')
 
     args = parser.parse_args()

@@ -1,80 +1,32 @@
 import argparse
-import random
 
 from torch_geometric.transforms import ToDevice
 from tqdm import tqdm
 
-from model import Net, IMPLEMENTED_MODELS, ImgEncoder
+from model import Net
 from motclass import MotDataset
 from utilities import *
+import torch
+import pickle
+
+from motclass import MotDataset
+from puzzle_diff.model.spatial_diffusion import *
+from utilities import get_best_device
+from torch_geometric.transforms import ToDevice
 
 
 # %% Function definitions
 
-def single_validate(model,
-                    val_loader,
-                    idx,
-                    loss_function,
-                    device,
-                    loss_not_initialized=False,
-                    classification=False,
-                    **loss_arguments):
-    """ Validate the model on a single subtrack, given a MOT dl and an index"""
-    model.eval()
-
-    data = val_loader[idx]
-
-    with torch.no_grad():
-        data = ToDevice(device.type)(data)
-        pred_edges = model(data)  # Get the predicted edge labels
-        gt_edges = data.y  # Get the true edge labels
-
-        if loss_not_initialized:
-            loss = loss_function(pred_edges, gt_edges, **loss_arguments)
-        else:
-            loss = loss_function(pred_edges, gt_edges)
-
-        zero_treshold = 0.33
-        one_treshold = 0.5
-
-        if classification:
-            zero_mask = pred_edges <= one_treshold
-            one_mask = pred_edges > one_treshold
-        else:
-            zero_mask = pred_edges < zero_treshold
-            one_mask = pred_edges > one_treshold
-
-        pred_edges = torch.where(one_mask, 1., pred_edges)
-        pred_edges = torch.where(zero_mask, 0., pred_edges)
-
-        if classification:
-            zero_mask = gt_edges <= one_treshold
-            one_mask = gt_edges > one_treshold
-        else:
-            zero_mask = gt_edges < zero_treshold
-            one_mask = gt_edges > one_treshold
-
-        acc_ones = torch.where(pred_edges[one_mask] == 1., 1., 0.).mean()
-        acc_zeros = torch.where(pred_edges[zero_mask] == 0., 1., 0.).mean()
-        ones_as_zeros = torch.where(pred_edges[one_mask] == 0., 1., 0.).mean()
-        zeros_as_ones = torch.where(pred_edges[zero_mask] == 1., 1., 0.).mean()
-
-        return loss.item(), acc_ones.item(), acc_zeros.item(), zeros_as_ones.item(), ones_as_zeros.item()
-
-
 def train(model,
           train_loader,
           val_loader,
-          loss_function,
           optimizer,
           epochs,
           device,
-          mps_fallback=False,
-          loss_not_initialized=True,
-          alpha=.95,
-          gamma=2,
-          reduction='mean',
-          classification=False):
+          mps_fallback=False):
+    """
+    Main training function.
+    """
     model = model.to(device)
     model.train()
 
@@ -116,16 +68,30 @@ def train(model,
                 save_model(model, mps_fallback=mps_fallback, classification=classification, epoch=epoch,
                            track_name=cur_track_name, epoch_info=epoch_info)
 
-            """ Training step """
+            " Training step "
 
-            pred_edges = model(data)  # Get the predicted edge labels
-            gt_edges = data.y  # Get the true edge labels
+            # One-hot encoded y
+            # oh_y = torch.where(torch.vstack((data.y, data.y)).t().cpu() == torch.tensor([1., 1.]),
+            #                    torch.tensor([1., 0]),
+            #                    torch.tensor([0., 1.])).to(device)
+            oh_y = torch.ops.one_hot(data.y.to(torch.int64), 2)  # .to(device).float()
 
-            # focal loss is implemented differently from the others
-            if loss_not_initialized:
-                train_loss = loss_function(pred_edges, gt_edges, alpha=alpha, gamma=gamma, reduction=reduction)
-            else:
-                train_loss = loss_function(pred_edges, gt_edges)
+            # Diffusion times
+            time = torch.zeros((oh_y.shape[0])).long()
+
+            # Edge attributes
+            edge_attr = data.edge_attr  # .to(device)
+
+            # Edge indexes
+            edge_index = data.edge_index  # .to(device)
+
+            train_loss = model.p_losses(
+                x_start=oh_y,
+                t=time,
+                loss_type="huber",
+                edge_index=edge_index,
+                edge_attr=edge_attr
+            )
 
             # Backward and optimize
             optimizer.zero_grad()
@@ -134,17 +100,12 @@ def train(model,
             torch.nn.utils.clip_grad_norm_(model.parameters(), 100)
 
             pbar_dl.update(1)
-            id_validate = random.choice(range(0, val_loader.n_subtracks))
-            """ Validation step """
+
+            " Validation step "
             val_loss, acc_ones, acc_zeros, zeros_as_ones, ones_as_zeros = single_validate(model=model,
                                                                                           val_loader=val_loader,
-                                                                                          idx=id_validate,
-                                                                                          loss_function=loss_function,
-                                                                                          device=device,
-                                                                                          loss_not_initialized=loss_not_initialized,
-                                                                                          classification=classification,
-                                                                                          alpha=alpha, gamma=gamma,
-                                                                                          reduction=reduction)
+                                                                                          idx=i,
+                                                                                          device=device)
 
             total_train_loss += train_loss.item()
             total_val_loss += val_loss
@@ -168,7 +129,7 @@ def train(model,
             epoch_info['avg_error_on_1'].append(average_1acc)
             epoch_info['avg_error_on_0'].append(average_1err)
 
-            """ Update progress """
+            " Update progress "
 
             avg_train_loss_msg = f'avg.Tr.Loss: {average_train_loss:.4f} (last: {train_loss:.4f})'
             avg_val_loss_msg = f'avg.Val.Loss: {average_val_loss:.4f} (last: {val_loss:.4f})'
@@ -186,15 +147,77 @@ def train(model,
         pbar_ep.set_description(f'[TQDM] Epoch #{epoch + 1} - avg.Loss: {(total_train_loss / (i + 1)):.4f}')
 
 
+def single_validate(model,
+                    val_loader,
+                    idx,
+                    device):
+    """
+    Validate the model on a single subtrack, given a MOT dataloader and an index.
+    """
+    model.eval()
+
+    data = val_loader[idx]
+
+    with torch.no_grad():
+        data = ToDevice(device.type)(data)
+
+        gt_edges = data.y
+
+        # One-hot encoded y
+        # oh_y = torch.where(torch.vstack((data.y, data.y)).t().cpu() == torch.tensor([1., 1.]),
+        #                    torch.tensor([1., 0]),
+        #                    torch.tensor([0., 1.])).to(device)
+        oh_y = torch.ops.one_hot(data.y.to(torch.int64), 2)  # .to(device).float()
+
+        # Diffusion times
+        time = torch.zeros((oh_y.shape[0])).long()
+
+        # Edge attributes
+        edge_attr = data.edge_attr  # .to(device)
+
+        # Edge indexes
+        edge_index = data.edge_index  # .to(device)
+
+        _, pred_edges_oh = model.p_sample_loop(shape=(oh_y.shape[0], 2),
+                                               cond=edge_attr,
+                                               edge_index=edge_index)
+
+        loss = model.p_losses(
+            x_start=oh_y,
+            t=time,
+            loss_type="huber",
+            edge_index=edge_index,
+            edge_attr=edge_attr
+        )
+
+        # IDEA 1
+        ths = 0
+        pred_edges = torch.where(pred_edges_oh < ths, torch.tensor([0., 1.]), torch.tensor([1., 0.]))
+
+        # IDEA 2
+        # pred_edges = torch.where(pred_edges_oh[:, 0] > pred_edges_oh[:, 1], 1., 0.)
+
+        zero_mask = gt_edges <= .5
+        one_mask = gt_edges > .5
+
+        acc_ones = torch.where(pred_edges[one_mask] == 1., 1., 0.).mean()
+        acc_zeros = torch.where(pred_edges[zero_mask] == 0., 1., 0.).mean()
+        ones_as_zeros = torch.where(pred_edges[one_mask] == 0., 1., 0.).mean()
+        zeros_as_ones = torch.where(pred_edges[zero_mask] == 1., 1., 0.).mean()
+
+        return loss.item(), acc_ones.item(), acc_zeros.item(), zeros_as_ones.item(), ones_as_zeros.item()
+
+
 # %% CLI args parser
-# ---------------------------------------------------------------------------------------------------------------------
+
 parser = argparse.ArgumentParser(
     prog='python train.py',
     description='Script for training a graph network on the MOT task',
     epilog='Es: python train.py',
     formatter_class=argparse.RawTextHelpFormatter)
 
-parser.add_argument('-D', '--datapath', default="/media/dmmp/vid+backup/Data",
+# TODO: remove the default option before deployment
+parser.add_argument('-D', '--datapath', default="data",
                     help="Path to the folder containing the MOT datasets."
                          "NB: This project assumes a MOT dataset, this project has been tested with MOT17 and MOT20")
 parser.add_argument('--model_savepath', default="saves/models",
@@ -225,7 +248,7 @@ parser.add_argument('-B', '--backbone', default="resnet50",
                     help="Visual backbone for nodes feature extraction.")
 parser.add_argument('--float16', action='store_true',
                     help="Whether to use half floats or not.")
-parser.add_argument('--apple', action='store_true',
+parser.add_argument('--apple-silicon', action='store_true',
                     help="Whether a Mac with Apple Silicon is in use with MPS acceleration."
                          "(required for some fallbacks due to lack of MPS support)")
 parser.add_argument('-Z', '--node_model', action='store_true',
@@ -284,14 +307,7 @@ parser.add_argument('--classification', action='store_true',
 
 args = parser.parse_args()
 
-# todo remove, used only for debug
-# -------------------------------------------------------------------------------------------------------------------
-# args.classification = True
-# args.loss_function = "focal"
-# -------------------------------------------------------------------------------------------------------------------
-
-
-# there was no preconception of what to do  -cit.
+# There was no preconception of what to do  -cit.
 classification = args.classification
 
 # %% Set up parameters
@@ -317,7 +333,7 @@ epochs = args.epochs
 heads = args.heads
 learning_rate = args.learning_rate
 
-# Knn logic
+# kNN logic
 if args.knn <= 0:
     knn_args = None
 else:
@@ -337,17 +353,16 @@ subtrack_len = args.subtrack_len
 slide = args.slide
 linkage_window = args.linkage_window
 
-# device
+# Device
 device = get_best_device()
-mps_fallback = args.apple  # Only if using MPS this should be true
+mps_fallback = args.apple_silicon  # Only if using MPS this should be true
 
-# loss function
+# Loss function
 alpha = args.alpha
 delta = args.delta
 gamma = args.gamma
-reduction = args.loss_reduction
+reduction = args.reduction
 loss_type = args.loss_function
-loss_not_initialized = False
 match loss_type:
     case 'huber':
         loss_function = IMPLEMENTED_LOSSES[loss_type](delta=delta, reduction=reduction)
@@ -357,12 +372,18 @@ match loss_type:
         loss_function = IMPLEMENTED_LOSSES[loss_type]()
     case 'focal':
         loss_function = IMPLEMENTED_LOSSES[loss_type]
-        loss_not_initialized = True
     case 'berhu':
         raise NotImplemented("BerHu loss has not been implemented yet")
     case _:
         raise NotImplemented(
-            "The chosen loss: " + loss_type + " has not been implemented yet. To see the available ones, run this script with the -h option")
+            "The chosen loss: " + loss_type + " has not been implemented yet."
+            "To see the available ones, run this script with the -h option")
+
+# %% Initialize the model
+
+model = GNN_Diffusion().to(device)
+
+optimizer = Adafactor(model.parameters())
 
 # %% Set up the dataloader
 
@@ -381,6 +402,7 @@ mot_train_dl = MotDataset(dataset_path=train_dataset_path,
                           device=device,
                           dtype=dtype,
                           mps_fallback=mps_fallback,
+                          preprocessed=False,
                           classification=classification)
 
 mot_val_dl = MotDataset(dataset_path=val_dataset_path,
@@ -394,35 +416,10 @@ mot_val_dl = MotDataset(dataset_path=val_dataset_path,
                         dl_mode=True,
                         device=device,
                         dtype=dtype,
-                        mps_fallback=mps_fallback,
-                        classification=classification)
+                        preprocessed=False,
+                        mps_fallback=mps_fallback)
 
-network_dict = IMPLEMENTED_MODELS[args.model]
-
-model = Net(backbone=backbone,
-            layer_tipe=layer_type,
-            layer_size=l_size,
-            dtype=dtype,
-            mps_fallback=mps_fallback,
-            edge_features_dim=EDGE_FEATURES_DIM,
-            heads=heads,
-            concat=False,
-            dropout=args.dropout,
-            add_self_loops=False,
-            steps=messages,
-            device=device,
-            model_dict=network_dict,
-            node_features_dim=ImgEncoder.output_dims[backbone],
-            is_edge_model=not args.node_model)
-
-# %% Initialize the model
-
-network_dict = IMPLEMENTED_MODELS[args.model]
-
-optimizer = args.optimizer
-optimizer = AVAILABLE_OPTIMIZERS[optimizer](model.parameters(), lr=learning_rate)
-
-# print info
+# Print information
 print("[INFO] hyper parameters:")
 print("\nDatasets:")
 print("\tDataset used for training: " + mot_train + " | validation: " + mot_val)
@@ -434,37 +431,22 @@ if classification:
     print("\tSetting: classification")
 else:
     print("\tSetting: regression")
-print("\nNetwork:")
-print("\tbackbone: " + backbone + "\n\t" +
-      "number of heads: " + str(heads) + "\n\t" +
-      "number of message passing steps: " + str(messages) + "\n\t" +
-      "layer type: " + layer_type + "\n\t" +
-      "layer size: " + str(l_size) + "\n\t" +
-      "number of edge features: " + str(EDGE_FEATURES_DIM) + "\n\t" +
-      "dropout: " + str(args.dropout) + "\n"
-      )
-print("\n Prediction based on:")
-if args.node_model:
-    print('\tNodes\n')
-else:
-    print('Edges\n')
-print("Training:")
-print("\tLoss function: " + loss_type)
-print("\tOptimizer: " + args.optimizer)
-print("\tLearning rate: " + str(learning_rate))
+
+# print("\nNetwork:")
+# print("\tbackbone: " + backbone + "\n\t" +
+#       "number of heads: " + str(heads) + "\n\t" +
+#       "number of message passing steps: " + str(messages) + "\n\t" +
+#       "layer type: " + layer_type + "\n\t" +
+#       "layer size: " + str(l_size) + "\n\t" +
+#       "number of edge features: " + str(EDGE_FEATURES_DIM) + "\n\t" +
+#       "dropout: " + str(args.dropout) + "\n"
+#       )
+
+# print("Training:")
+# print("\tLoss function: " + loss_type)
+# print("\tOptimizer: " + args.optimizer)
+# print("\tLearning rate: " + str(learning_rate))
 
 # %% Train the model
 
-train(model,
-      mot_train_dl,
-      mot_val_dl,
-      loss_function,
-      optimizer,
-      epochs,
-      device,
-      mps_fallback,
-      loss_not_initialized=loss_not_initialized,
-      alpha=alpha,
-      gamma=gamma,
-      reduction=reduction,
-      classification=classification)
+train(model, mot_train_dl, mot_val_dl, optimizer, epochs, device, mps_fallback)

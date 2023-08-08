@@ -14,37 +14,25 @@ from collections import OrderedDict
 device = get_best_device()
 
 data_loader = MotDataset(dataset_path='/media/dmmp/vid+backup/Data/MOT17',
-                          split='train',
-                          subtrack_len=15,
-                          slide=10,
-                          linkage_window=5,
-                          detections_file_folder='gt',
-                          detections_file_name='gt.txt',
-                          dl_mode=True,
-                          knn_pruning_args={'k': 20, 'cosine': False},
-                          device=device,
-                          dtype=torch.float32,
-                          classification=True)
+                         split='train',
+                         subtrack_len=15,
+                         slide=10,
+                         linkage_window=5,
+                         detections_file_folder='gt',
+                         detections_file_name='gt.txt',
+                         dl_mode=True,
+                         knn_pruning_args={'k': 20, 'cosine': False},
+                         device=device,
+                         dtype=torch.float32,
+                         classification=True)
 
-# model = load_model_pkl("base_500_resnet50-backbone.pkl", device=device)  # regression
+#model = load_model_pkl("saves/models/timeaware_500_resnet50-backbone.pkl", device=device)  # regression
 # model.mps_fallback = True
 
-model = Net(backbone="ResNet50",
-            layer_tipe="base",
-            layer_size=500,
-            dtype=torch.float32,
-            edge_features_dim=6,
-            heads=6,
-            concat=False,
-            dropout=0.3,
-            add_self_loops=False,
-            steps=6,
-            device=device)
+#model.eval()
 
-model.eval()
-
-model = model.to(device)
-
+#model = model.to(device)
+model =None
 
 nodes_dict = {}  # frame, bbox
 id = 1
@@ -88,20 +76,20 @@ def build_trajectory_rec(node_idx:int, pyg_graph, nx_graph, node_dists, nodes_to
 
             orp_id = nodes_dict[(orp_frame, *orp_coords)]
             new_row =  {'frame': orp_frame,
-                 'id': orp_id,
-                 'bb_left': orp_coords[0],
-                 'bb_top': orp_coords[1],
-                 'bb_width': orp_coords[2],
-                 'bb_height': orp_coords[3],
-                 'conf': -1,
-                 'x': -1,
-                 'y': -1,
-                 'z': -1}
+                       'id': orp_id,
+                       'bb_left': orp_coords[0],
+                       'bb_top': orp_coords[1],
+                       'bb_width': orp_coords[2],
+                       'bb_height': orp_coords[3],
+                       'conf': -1,
+                       'x': -1,
+                       'y': -1,
+                       'z': -1}
             final_df.loc[len(final_df)] = new_row
 
             ### CHECK IF NEEDED ###
 
-        return new_id # True
+        return new_id  # True
 
     # Find best edge to keep
     # TODO: find best peso
@@ -168,6 +156,8 @@ def build_trajectory_rec(node_idx:int, pyg_graph, nx_graph, node_dists, nodes_to
                              depth=depth)
     return new_id
 
+# todo: cliargs
+outpath = "trackers/exp1/"
 
 def build_trajectories(graph, preds, ths=.33):
     global nodes_dict
@@ -200,10 +190,11 @@ previous_track_idx = 0
 
 for _, data in tqdm(enumerate(data_loader), desc='[TQDM] Converting tracklet', total=data_loader.n_subtracks): # todo: explain track
     cur_track_idx = data_loader.cur_track
-    cur_track_name = data_loader.tracklist[data_loader.cur_track]
+
     if cur_track_idx != previous_track_idx and cur_track_idx != 0:
+        cur_track_name = data_loader.tracklist[previous_track_idx]
+        final_df.sort_values(by=['id', 'frame']).drop_duplicates().to_csv(outpath+cur_track_name + ".txt", index=False, header=False)
         previous_track_idx += 1
-        final_df.sort_values(by=['id', 'frame']).to_csv(cur_track_name + ".csv")
         # reset values
         nodes_dict = {}  # frame, bbox
         id = 1
@@ -231,5 +222,5 @@ for _, data in tqdm(enumerate(data_loader), desc='[TQDM] Converting tracklet', t
 
 
 
-# todo: fix
+# todo: fix data loading
 
