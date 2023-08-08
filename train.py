@@ -225,7 +225,7 @@ parser.add_argument('-B', '--backbone', default="resnet50",
                     help="Visual backbone for nodes feature extraction.")
 parser.add_argument('--float16', action='store_true',
                     help="Whether to use half floats or not.")
-parser.add_argument('--apple', action='store_true',
+parser.add_argument('--apple-silicon', action='store_true',
                     help="Whether a Mac with Apple Silicon is in use with MPS acceleration."
                          "(required for some fallbacks due to lack of MPS support)")
 parser.add_argument('-Z', '--node_model', action='store_true',
@@ -284,12 +284,11 @@ parser.add_argument('--classification', action='store_true',
 
 args = parser.parse_args()
 
-# todo remove, used only for debug
+# TODO: remove, used only for debug
 # -------------------------------------------------------------------------------------------------------------------
 # args.classification = True
 # args.loss_function = "focal"
 # -------------------------------------------------------------------------------------------------------------------
-
 
 # there was no preconception of what to do  -cit.
 classification = args.classification
@@ -339,13 +338,13 @@ linkage_window = args.linkage_window
 
 # device
 device = get_best_device()
-mps_fallback = args.apple  # Only if using MPS this should be true
+mps_fallback = args.apple_silicon  # Only if using MPS this should be true
 
 # loss function
 alpha = args.alpha
 delta = args.delta
 gamma = args.gamma
-reduction = args.loss_reduction
+reduction = args.reduction  # <------------ Earlier this was args.loss_reduction, but it was an error right? ----------
 loss_type = args.loss_function
 loss_not_initialized = False
 match loss_type:
@@ -381,7 +380,8 @@ mot_train_dl = MotDataset(dataset_path=train_dataset_path,
                           device=device,
                           dtype=dtype,
                           mps_fallback=mps_fallback,
-                          classification=classification)
+                          classification=classification,
+                          preprocessed=False)  # -------------------------------------------------------------------- !
 
 mot_val_dl = MotDataset(dataset_path=val_dataset_path,
                         split='train',
@@ -395,9 +395,12 @@ mot_val_dl = MotDataset(dataset_path=val_dataset_path,
                         device=device,
                         dtype=dtype,
                         mps_fallback=mps_fallback,
-                        classification=classification)
+                        classification=classification,
+                        preprocessed=False)  # ---------------------------------------------------------------------- !
 
-network_dict = IMPLEMENTED_MODELS[args.model]
+args.model = "timeaware"  # <- added this for now
+
+network_dict = IMPLEMENTED_MODELS[args.model]  # <------ args.model was still not implemented, right?
 
 model = Net(backbone=backbone,
             layer_tipe=layer_type,
@@ -416,8 +419,6 @@ model = Net(backbone=backbone,
             is_edge_model=not args.node_model)
 
 # %% Initialize the model
-
-network_dict = IMPLEMENTED_MODELS[args.model]
 
 optimizer = args.optimizer
 optimizer = AVAILABLE_OPTIMIZERS[optimizer](model.parameters(), lr=learning_rate)

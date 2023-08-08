@@ -38,7 +38,8 @@ from torch_scatter import (
     scatter_log_softmax
 )
 from torchvision import models
-from  utilities import *
+from utilities import *
+
 
 # TODO: capire come gestire la variabilità dei layers
 
@@ -78,7 +79,6 @@ class ImgEncoder(torch.nn.Module):
         self.model.eval()
         self.model.to(dtype=dtype)
 
-
     def forward(self, img):
         with torch.no_grad():
             features = self.model(img)
@@ -114,10 +114,11 @@ class EdgePredictorFromNodes(torch.nn.Module):
         x = self.lin2(x).squeeze()
         return x
 
+
 # ok
 class TransformerConvWithEdgeUpdate(torch_geometric.nn.TransformerConv):
     def __init__(self,
-                 edge_model:bool=True,
+                 edge_model: bool = True,
                  agg_future=None, agg_past=None, agg_base=None,
                  **kwargs):
         super(TransformerConvWithEdgeUpdate, self).__init__(**kwargs)
@@ -228,7 +229,7 @@ class BaseEdgeModel(torch.nn.Module):
             try:
                 out = out + edge_attr
             except:
-                pass # on the first iteration we shouldn't add residuals
+                pass  # on the first iteration we shouldn't add residuals
         return out
 
 
@@ -296,21 +297,20 @@ class TimeAwareNodeModel(torch.nn.Module):
             try:
                 out = out + x
             except:
-                pass # not add residuals on the first it. TODO: find a more elegant way
+                pass  # not add residuals on the first it. TODO: find a more elegant way
         return out
 
 
 class GATv2ConvWithEdgeUpdate(MessagePassing):
-
     _alpha: OptTensor
 
     def __init__(
-        self,
-        edge_model:bool = True,
-        agg_future=None, agg_past=None, agg_base:str='mean',
-            n_features:int=2048, n_edge_features:int=6, hiddens:int=256,
-            n_targets:int=256, residuals:bool=False, heads:int=6,
-        **kwargs,
+            self,
+            edge_model: bool = True,
+            agg_future=None, agg_past=None, agg_base: str = 'mean',
+            n_features: int = 2048, n_edge_features: int = 6, hiddens: int = 256,
+            n_targets: int = 256, residuals: bool = False, heads: int = 6,
+            **kwargs,
     ):
         super().__init__(node_dim=0, **kwargs)
 
@@ -323,7 +323,6 @@ class GATv2ConvWithEdgeUpdate(MessagePassing):
         self.add_self_loops = False
         self.edge_dim = n_edge_features
         self.fill_value = agg_base
-
 
         self.lin_l = Linear(self.in_channels, heads * self.out_channels,
                             weight_initializer='glorot')
@@ -349,10 +348,10 @@ class GATv2ConvWithEdgeUpdate(MessagePassing):
     def forward(self, x: Union[Tensor, PairTensor], edge_index: Adj,
                 edge_attr: OptTensor = None,
                 return_attention_weights: bool = None):
-        #£ type: (Union[Tensor, PairTensor], Tensor, OptTensor, NoneType) -> Tensor  # noqa
-        #£ type: (Union[Tensor, PairTensor], SparseTensor, OptTensor, NoneType) -> Tensor  # noqa
-        #£ type: (Union[Tensor, PairTensor], Tensor, OptTensor, bool) -> Tuple[Tensor, Tuple[Tensor, Tensor]]  # noqa
-        #£ type: (Union[Tensor, PairTensor], SparseTensor, OptTensor, bool) -> Tuple[Tensor, SparseTensor]  # noqa
+        # £ type: (Union[Tensor, PairTensor], Tensor, OptTensor, NoneType) -> Tensor  # noqa
+        # £ type: (Union[Tensor, PairTensor], SparseTensor, OptTensor, NoneType) -> Tensor  # noqa
+        # £ type: (Union[Tensor, PairTensor], Tensor, OptTensor, bool) -> Tuple[Tensor, Tuple[Tensor, Tensor]]  # noqa
+        # £ type: (Union[Tensor, PairTensor], SparseTensor, OptTensor, bool) -> Tuple[Tensor, SparseTensor]  # noqa
         r"""Runs the forward pass of the module.
 
         Args:
@@ -390,7 +389,6 @@ class GATv2ConvWithEdgeUpdate(MessagePassing):
         assert alpha is not None
         self._alpha = None
 
-
         out = out.mean(dim=1)
 
         if self.bias is not None:
@@ -420,12 +418,12 @@ class GATv2ConvWithEdgeUpdate(MessagePassing):
         x = x_i + x_j
 
         if edge_attr is not None:
-        #     if edge_attr.dim() == 1:
-        #         edge_attr = edge_attr.view(-1, 1)
-        #     assert self.lin_edge is not None
-        #     edge_attr = self.lin_edge(edge_attr)
-        #     edge_attr = edge_attr.view(-1, self.heads, self.out_channels)
-            x = x + edge_attr # ----> edges are updeted here <-----
+            #     if edge_attr.dim() == 1:
+            #         edge_attr = edge_attr.view(-1, 1)
+            #     assert self.lin_edge is not None
+            #     edge_attr = self.lin_edge(edge_attr)
+            #     edge_attr = edge_attr.view(-1, self.heads, self.out_channels)
+            x = x + edge_attr  # ----> edges are updeted here <-----
             self.__edge_attr__ = edge_attr
 
         x = F.leaky_relu(x, self.negative_slope)
@@ -441,25 +439,26 @@ class GATv2ConvWithEdgeUpdate(MessagePassing):
 
 
 # todo: integrate aggregation in other models
-def build_custom_mp(n_target_nodes, n_target_edges, n_features, n_edge_features, layer_size, residuals, model_dict:dict,
-                    future_aggregation:str='sum', past_aggregation='mean',base_aggregation='sum',device="cuda"):
+def build_custom_mp(n_target_nodes, n_target_edges, n_features, n_edge_features, layer_size, residuals,
+                    model_dict: dict,
+                    future_aggregation: str = 'sum', past_aggregation='mean', base_aggregation='sum', device="cuda"):
     edge_model = model_dict['edge'](n_features=n_features, n_edge_features=n_edge_features, hiddens=layer_size,
                                     n_targets=n_target_edges, residuals=residuals)
     node_model = model_dict['node'](n_features=n_features, n_edge_features=n_target_edges, hiddens=layer_size,
                                     n_targets=n_target_nodes, residuals=residuals,
-                                    agg_future=future_aggregation, agg_past=past_aggregation, agg_base=base_aggregation) #,
-                                    # in_channels=n_features, out_channels=layer_size)
+                                    agg_future=future_aggregation, agg_past=past_aggregation,
+                                    agg_base=base_aggregation)  # ,
+    # in_channels=n_features, out_channels=layer_size)
     return torch_geometric.nn.MetaLayer(
         edge_model=edge_model,
         node_model=node_model
     ).to(device=device)
 
 
-
 class Net(torch.nn.Module):
 
     def __init__(self,
-                 node_features_dim:int,
+                 node_features_dim: int,
                  model_dict: dict,
                  layer_size=256,
                  n_target_nodes=256,
@@ -467,14 +466,14 @@ class Net(torch.nn.Module):
                  steps=2,
                  edge_features_dim=EDGE_FEATURES_DIM,
                  residuals: bool = True,
-                 past_aggregation:str="mean",
-                 future_aggregation:str='sum',
-                 base_aggregation:str='mean',
+                 past_aggregation: str = "mean",
+                 future_aggregation: str = 'sum',
+                 base_aggregation: str = 'mean',
                  dtype=torch.float32,
                  mps_fallback=False,
                  device='cuda:0',
                  is_edge_model: bool = True,
-                 used_backbone:str = 'resnet50',
+                 used_backbone: str = 'resnet50',
                  **kwargs):
         super(Net, self).__init__()
         self.layer_size = layer_size
@@ -486,8 +485,10 @@ class Net(torch.nn.Module):
         self.future_aggregation = future_aggregation
         self.base_aggregation = base_aggregation
 
-        self.conv_in = build_custom_mp(n_target_nodes=n_target_nodes, n_target_edges=n_target_edges, n_features=self.node_features_dim, n_edge_features=edge_features_dim,
-                                       layer_size=layer_size, residuals=residuals, device=device, model_dict=model_dict, future_aggregation=future_aggregation,
+        self.conv_in = build_custom_mp(n_target_nodes=n_target_nodes, n_target_edges=n_target_edges,
+                                       n_features=self.node_features_dim, n_edge_features=edge_features_dim,
+                                       layer_size=layer_size, residuals=residuals, device=device, model_dict=model_dict,
+                                       future_aggregation=future_aggregation,
                                        past_aggregation=past_aggregation, base_aggregation=base_aggregation)
 
         kwargs['edge_dim'] = layer_size
@@ -499,7 +500,8 @@ class Net(torch.nn.Module):
         for i in range(steps - 1):
             # self.conv.append(self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size, **kwargs))
             self.conv.append(
-                build_custom_mp(n_target_nodes=n_target_nodes, n_target_edges=n_target_edges, n_features=n_target_nodes, n_edge_features=n_target_edges,
+                build_custom_mp(n_target_nodes=n_target_nodes, n_target_edges=n_target_edges, n_features=n_target_nodes,
+                                n_edge_features=n_target_edges,
                                 layer_size=layer_size, residuals=residuals, device=device, model_dict=model_dict)
             )
 
@@ -558,29 +560,30 @@ class Net(torch.nn.Module):
         layer_size = 'layer-size-' + str(self.layer_size)
         backbone = "backbone-" + self.used_backbone
         if ('timeaware' in self.model_dict['node_name']) or ('timeaware' in self.model_dict['edge_name']):
-            aggregation = 'past-'+self.past_aggregation + "-future-"+ self.future_aggregation
+            aggregation = 'past-' + self.past_aggregation + "-future-" + self.future_aggregation
         else:
             aggregation = 'aggregation-' + self.base_aggregation
-        name = '_'.join([model_type,node_model,edge_model,layer_size,backbone,aggregation])
+        name = '_'.join([model_type, node_model, edge_model, layer_size, backbone, aggregation])
         return name
 
+
 IMPLEMENTED_MODELS = {
-    'timeaware':{
+    'timeaware': {
         'node': TimeAwareNodeModel,
         'edge': BaseEdgeModel,
-        'node_name':'timeaware',
-        'edge_name':'base'
+        'node_name': 'timeaware',
+        'edge_name': 'base'
     },
-'transformer':{
+    'transformer': {
         'node': TransformerConvWithEdgeUpdate,
         'edge': BaseEdgeModel,
-        'node_name':'transformer',
-        'edge_name':'base'
+        'node_name': 'transformer',
+        'edge_name': 'base'
     },
-'attention':{
+    'attention': {
         'node': GATv2ConvWithEdgeUpdate,
         'edge': BaseEdgeModel,
-        'node_name':'attention',
-        'edge_name':'base'
+        'node_name': 'attention',
+        'edge_name': 'base'
     }
 }
