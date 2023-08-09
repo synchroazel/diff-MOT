@@ -93,7 +93,7 @@ class EdgePredictorFromEdges(torch.nn.Module):
         self.lin2 = nn.Linear(hidden_channels, 1)
 
     def forward(self, edge_attr):
-        x = F.relu(self.lin1(edge_attr))
+        x = F.leaky_relu(self.lin1(edge_attr))
         x = F.dropout(x, training=self.training)
         x = self.lin2(x)
         x = x.squeeze()
@@ -109,7 +109,7 @@ class EdgePredictorFromNodes(torch.nn.Module):
     def forward(self, x_i, x_j):
         # x_i and x_j have shape [E, in_channels]
         x = torch.cat([x_i, x_j], dim=-1)  # Concatenate node features.
-        x = F.relu(self.lin1(x))
+        x = F.leaky_relu(self.lin1(x))
         x = F.dropout(x, training=self.training)
         x = self.lin2(x).squeeze()
         return x

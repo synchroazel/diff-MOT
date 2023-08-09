@@ -1,5 +1,9 @@
 import argparse
+import math
 import random
+
+import numpy
+import torch
 
 from torch_geometric.transforms import ToDevice
 from tqdm import tqdm
@@ -9,6 +13,8 @@ from motclass import MotDataset
 from utilities import *
 
 # %% Function definitions
+
+torch.autograd.set_detect_anomaly(True)
 
 def single_validate(model, val_loader, idx, loss_function, device,loss_not_initialized=False, classification=False,**loss_arguments):
     """ Validate the model on a single subtrack, given a MOT dl and an index"""
@@ -113,11 +119,16 @@ def train(model, train_loader, val_loader, loss_function, optimizer, epochs, dev
             else:
                 train_loss = loss_function(pred_edges, gt_edges)
 
+
+            if torch.isnan(train_loss):
+                raise Exception("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+                pass
             # Backward and optimize
             optimizer.zero_grad()
             train_loss.backward()
             optimizer.step()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 100)
+
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5, error_if_nonfinite=True)
 
             pbar_dl.update(1)
             id_validate = random.choice(range(0, val_loader.n_subtracks))
@@ -130,6 +141,8 @@ def train(model, train_loader, val_loader, loss_function, optimizer, epochs, dev
                                                                                           classification=classification,
                                                                                           alpha=alpha, gamma=gamma, reduction=reduction)
 
+            if numpy.isnan(val_loss)  or numpy.isnan(total_val_loss):
+                pass
             total_train_loss += train_loss.item()
             total_val_loss += val_loss
             total_0acc += acc_zeros
@@ -184,14 +197,14 @@ NB: This project assumes a MOT dataset, this project has been tested with MOT17 
 parser.add_argument('--model_savepath', default="saves/models", help="""Folder where models are loaded""")
 parser.add_argument('--output_savepath', default="saves/outputs", help="""Folder where outputs are saved""")
 parser.add_argument('-m', '--MOTtrain', default="MOT17", help="""MOT dataset on which the network is trained""")
-parser.add_argument('-M', '--MOTvalidation', default="MOT20",
+parser.add_argument('-M', '--MOTvalidation', default="MOT17",
                     help="""MOT dataset on which the single validate is calculated""")
 parser.add_argument('-B', '--backbone', default="resnet50", help="""Visual backbone for nodes feature extraction""")
 parser.add_argument('--float16', action='store_true', help="""Whether to use half floats or not""")
 parser.add_argument('--apple', action='store_true', help="""Whether an apple device is in use with mps
 (required for some fallbacks due to lack of mps support)""")
 parser.add_argument('-Z', '--node_model', action='store_true', help="""Use the node model instead of the edge model""")
-parser.add_argument('-L', '--loss_function', default="huber", help="""Loss function to use.
+parser.add_argument('-L', '--loss_function', default="mse", help="""Loss function to use.
 Implemented losses: huber, bce, focal, dice""")
 parser.add_argument('--epochs', default=1, type=int, help="""Number of epochs
 NB: one seems to be more than enough. The model is updated every new track and one epoch takes ~12h""")
@@ -208,7 +221,7 @@ parser.add_argument('--future_aggregation', default="sum", help="""Aggregation l
 Implemented reductions: 'sum', 'add', 'mul', 'mean, 'min', 'max', 'std', 'logsumexp', 'softmax', 'log_softmax'""")
 parser.add_argument('--aggregation', default="mean", help="""Aggregation logic for other layers
 Implemented reductions: 'mean', 'sum'""")
-parser.add_argument('-l', '--learning_rate', default=0.001, type=float, help="""learning rate""")
+parser.add_argument('-l', '--learning_rate', default=0.0001, type=float, help="""learning rate""")
 parser.add_argument('--dropout', default=0.3, type=float, help="""dropout""")
 parser.add_argument('--optimizer', default="AdamW", help="""Optimizer to use
 TODO: put available optimizers""")  # TODO
@@ -235,8 +248,8 @@ args = parser.parse_args()
 
 # todo remove, used only for debug
 # -------------------------------------------------------------------------------------------------------------------
-# args.classification = True
-# args.loss_function = "focal"
+args.classification = True
+args.loss_function = "focal"
 # -------------------------------------------------------------------------------------------------------------------
 
 
@@ -300,7 +313,7 @@ match loss_type:
         loss_function = IMPLEMENTED_LOSSES[loss_type](delta=delta, reduction=reduction)
         if classification:
             raise Exception("Huber loss should not be used in a classification setting, please choose a different one")
-    case 'bce':
+    case 'bce'| 'mae'| 'mse':
         loss_function = IMPLEMENTED_LOSSES[loss_type]()
     case 'focal':
         loss_function = IMPLEMENTED_LOSSES[loss_type]
@@ -365,7 +378,7 @@ model = Net(backbone=backbone,
 
 # %% Initialize the model
 
-network_dict = IMPLEMENTED_MODELS[args.model]
+model.train()
 
 optimizer = args.optimizer
 optimizer = AVAILABLE_OPTIMIZERS[optimizer](model.parameters(), lr=learning_rate)

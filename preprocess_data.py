@@ -10,12 +10,12 @@ from utilities import *
 # todo: cli args
 
 dataset = "MOT17"
-classification=False
+classification=True
 
 data_loader = MotDataset(dataset_path="/media/dmmp/vid+backup/Data/MOT17",
                          split="train",
-                         subtrack_len=15,
-                         slide=10,
+                         subtrack_len=20,
+                         slide=15,
                          linkage_window=5,
                          detections_file_folder="gt",
                          detections_file_name="gt.txt",

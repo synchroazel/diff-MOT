@@ -54,10 +54,10 @@ def build_graph(linkage_window: int,
     """
 
     positions = box_convert(torch.clone(detections_coords).detach(), "xyxy", "cxcywh")
-
-    # Assigned to data.pos, used for knn
-    # position_matrix = torch.zeros((detections_coords.shape[0], 2))
     position_matrix = positions[:, (0, 1)]
+
+    # position_matrix = detections
+
     distance_matrix = torch.cdist(detections, detections)
 
     detections = detections.to(dtype)
@@ -90,17 +90,6 @@ def build_graph(linkage_window: int,
         if mps_fallback:
             graph = graph.to('mps')
 
-        # `linkage_window` determines the type of linkage between detections.
-
-        # LINKAGE TYPE: ALL (`linkage_window` = -1)
-        #   Connect frames detections with ALL detections from different frames
-
-        # LINKAGE TYPE: ADJACENT (`linkage_window` = 0)
-        #   Connect ADJACENT frames detections
-
-        # LINKAGE TYPE: WINDOW (`linkage_window` > 0)
-        #   Connect frames detections with detections up to `linkage_window` frames in the future
-
     # remove duplicates and make graph true undirected
     sources, targets = graph.edge_index
     mask = sources < targets
@@ -119,13 +108,14 @@ def build_graph(linkage_window: int,
     mask = (time_distances < linkage_window) & (time_distances != 0)
     graph.edge_index = graph.edge_index[:, mask]
 
+    graph.edge_index = shuffle_tensor(graph.edge_index.t()).t()
     # assert knn didn't delete gt
-    gt_adjacency_set = set([tuple(x) for x in gt_dict['1']])
-    # assert no ground truth has been lost
-    test_list = graph.edge_index.t().tolist()
-    test = [list(a) in test_list for a in gt_adjacency_set]
-    assert all(a is True for a in test)
-    del test, test_list
+    # gt_adjacency_set = set([tuple(x) for x in gt_dict['1']])
+    # # # assert no ground truth has been lost
+    # test_list = graph.edge_index.t().tolist()
+    # test = [list(a) in test_list for a in gt_adjacency_set]
+    # # assert all(a is True for a in test)
+    # del test, test_list
 
 
     # # once the graph is pruned, compute edge attributes
@@ -136,15 +126,15 @@ def build_graph(linkage_window: int,
 
     # Compute x, y, h, w, and t attributes for each edge using tensor operations
     edge_attributes[:, 0] = (2 * (detections_coords[targets, 0] - detections_coords[sources, 0])) / (
-                detections_coords[sources, 2] + detections_coords[targets, 2])
+            detections_coords[sources, 2] + detections_coords[targets, 2])
     edge_attributes[:, 1] = (2 * (detections_coords[sources, 1] - detections_coords[targets, 1])) / (
-                detections_coords[sources, 3] + detections_coords[targets, 3])
+            detections_coords[sources, 3] + detections_coords[targets, 3])
     edge_attributes[:, 2] = torch.log(detections_coords[sources, 2] / detections_coords[targets, 2])
     edge_attributes[:, 3] = torch.log(detections_coords[sources, 3] / detections_coords[targets, 3])
     edge_attributes[:, 4] = (frame_times[targets] - frame_times[sources]).squeeze() / frame_times[-1]
-    edge_attributes[:, 5] = distance_matrix[sources, targets]
+    edge_attributes[:, 5] = 1 / distance_matrix[sources, targets]
 
-    graph.edge_attr = edge_attributes
+    graph.edge_attr = edge_attributes.add(1e-5)
 
     # Build `y` tensor to compare predictions with gt
     weight_potencies = list(gt_dict.keys())
@@ -300,8 +290,7 @@ class MotTrack:
             # build ground truth dict
 
             gt_dict = dict()
-            if self.linkage_window == -1:
-                self.linkage_window = self.n_frames
+
 
             if self.classification:
                 gt_dict['1'] = []

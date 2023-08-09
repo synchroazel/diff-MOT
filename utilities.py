@@ -7,7 +7,7 @@ import pickle
 import networkx as nx
 import numpy as np
 import torch
-from torch.nn import HuberLoss, BCEWithLogitsLoss
+from torch.nn import HuberLoss, BCEWithLogitsLoss, MSELoss, L1Loss
 from torch_geometric.utils import to_networkx
 from torchvision.ops import sigmoid_focal_loss
 
@@ -154,6 +154,11 @@ def load_model_pkl(pkl_path, device='cpu'):
         obj = unpickler.load()
     return obj
 
+def shuffle_tensor(tensor):
+    idx = torch.randperm(tensor.shape[0])
+    t = tensor[idx].view(tensor.size())
+    return t
+
 # TODO: add more?
 AVAILABLE_OPTIMIZERS = {
     'AdamW': torch.optim.AdamW,
@@ -172,6 +177,8 @@ IMPLEMENTED_LOSSES = {
     'huber': HuberLoss,
     'bce': BCEWithLogitsLoss,
     'focal': sigmoid_focal_loss,
+    'mae':L1Loss,
+    'mse':MSELoss,
     'berhu':None,
 }
 
