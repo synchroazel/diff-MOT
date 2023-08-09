@@ -1,7 +1,7 @@
 """
 Set of classes used to deal with datasets and tracks.
 """
-
+import torch
 import torch_geometric.data as pyg_data
 from PIL import Image
 from torch.utils.data import Dataset
@@ -28,7 +28,8 @@ class MOTGraph(pyg_data.Data):
         self.detections = detections
 
 
-def build_graph(adjacency_list: torch.Tensor,
+def build_graph(linkage_window: int,
+                n_nodes:list,
                 gt_dict: dict,
                 detections: torch.Tensor,
                 frame_times: torch.Tensor,
@@ -52,32 +53,24 @@ def build_graph(adjacency_list: torch.Tensor,
     :return: a Pytorch Geometric graph object
     """
 
-    detections_coords_og = detections_coords.clone().detach()
-
-    detections = detections.to(dtype)
-    number_of_nodes = len(detections)
-
-    # For distance calculation
-    detections_coords = box_convert(torch.clone(detections_coords).detach(), "xyxy", "cxcywh")
+    positions = box_convert(torch.clone(detections_coords).detach(), "xyxy", "cxcywh")
 
     # Assigned to data.pos, used for knn
     # position_matrix = torch.zeros((detections_coords.shape[0], 2))
-    position_matrix = detections_coords[:, (0, 1)]
+    position_matrix = positions[:, (0, 1)]
+    distance_matrix = torch.cdist(detections, detections)
 
-    # / 1000 is needed if we have 16bit floats, otherwise overflow will occur
-    # detections_coords = detections_coords[:, (0, 1)] / 1000
-
-    # detections_dist = torch.cdist(detections_coords.to(torch.float32), detections_coords.to(torch.float32)).to(dtype)
-
+    detections = detections.to(dtype)
+    number_of_nodes = len(detections)
     # Prepare for pyg_data.Data
-    adjacency_list = adjacency_list.t().contiguous()
+    adjacency_list = None
 
     graph = MOTGraph(
         edge_index=adjacency_list,
         gt_adjacency_dict=gt_dict,
         y=None,
         detections=detections,
-        detections_coords=detections_coords_og,
+        detections_coords=detections_coords,
         num_nodes=number_of_nodes,
         edge_attr=None,
         pos=position_matrix,
@@ -93,75 +86,63 @@ def build_graph(adjacency_list: torch.Tensor,
         knn_morpher = KNNGraph(loop=False, force_undirected=True, **knn_pruning_args)
         graph = knn_morpher(graph)
 
+        # knn graph is somehow not respecting the original edges,
         if mps_fallback:
             graph = graph.to('mps')
 
-    # Once the graph is pruned, compute edge attributes
+        # `linkage_window` determines the type of linkage between detections.
 
-    # edge_attributes = torch.zeros(graph.edge_index.shape[1], EDGE_FEATURES_DIM).to(device)
-    # # obtain info for each edge
-    # x = list()
-    # y = list()
-    # h = list()
-    # w = list()
-    # t = list()
-    # # GIoU = list()
-    # # Gboxes = box_convert(detections_coords, "cxcywh", "xyxy")
-    # for egde in graph.edge_index.t():
-    #     x.append(
-    #         ((2 * (detections_coords[egde[1], 0] - detections_coords[egde[0], 0])) /  # 2(xj - xi)
-    #          (detections_coords[egde[0], 2] + detections_coords[egde[1], 2])).item()  # wi + wj
-    #     )
-    #
-    #     y.append(
-    #         ((2 * (detections_coords[egde[0], 1] - detections_coords[egde[1], 1])) /  # 2(yj - yi)
-    #          (detections_coords[egde[0], 3] + detections_coords[egde[1], 3])).item()  # hi + hj
-    #     )
-    #
-    #     h.append(torch.log(detections_coords[egde[0], 2] / detections_coords[egde[1], 2]).item())  # log(hi/hj)
-    #
-    #     w.append(torch.log(detections_coords[egde[0], 3] / detections_coords[egde[1], 3]).item())  # log(wi/wj)
-    #
-    #     t.append((frame_times[egde[1]] - frame_times[egde[0]]).item() / frame_times[-1])
-    #     # t.append((frame_times[egde[1]] - frame_times[egde[0]]).item())
-    #     # GIoU.append(
-    #     #     generalized_box_iou(
-    #     #         boxes1=Gboxes[egde[0],:].unsqueeze(0),
-    #     #         boxes2=Gboxes[egde[1],:].unsqueeze(0)
-    #     #     ).item()
-    #     # )
-    #
-    # # position information
-    # edge_attributes[:, 0] = torch.tensor(x)
-    # edge_attributes[:, 1] = torch.tensor(y)
-    # edge_attributes[:, 2] = torch.tensor(h)
-    # edge_attributes[:, 3] = torch.tensor(w)
-    # # Time information
-    # edge_attributes[:, 4] = torch.tensor(t)
-    #
-    # # difference in features
-    # distance_matrix = torch.cdist(detections, detections, p=2)
-    # for i, edge in enumerate(graph.edge_index):
-    #     # edge_attr[i,-1] = 1 / distance_matrix[edge[0],edge[1]] # ------> to have feature between 0 and 1 <------------
-    #     edge_attributes[i, -1] = distance_matrix[edge[0], edge[1]]
-    # del distance_matrix
-    #
-    # graph.edge_attr = edge_attributes
-    # del x, y, h, w, t
+        # LINKAGE TYPE: ALL (`linkage_window` = -1)
+        #   Connect frames detections with ALL detections from different frames
+
+        # LINKAGE TYPE: ADJACENT (`linkage_window` = 0)
+        #   Connect ADJACENT frames detections
+
+        # LINKAGE TYPE: WINDOW (`linkage_window` > 0)
+        #   Connect frames detections with detections up to `linkage_window` frames in the future
+
+    # remove duplicates and make graph true undirected
+    sources, targets = graph.edge_index
+    mask = sources < targets
+    graph.edge_index = graph.edge_index[:, mask]
+
+    # linkage
+
+    # time mask
+    sources, targets = graph.edge_index
+    time_distances = (frame_times[targets] - frame_times[sources]).squeeze()
+
+    if linkage_window == -1:
+        linkage_window = torch.inf
+    elif linkage_window == 0:
+        linkage_window = 1
+    mask = (time_distances < linkage_window) & (time_distances != 0)
+    graph.edge_index = graph.edge_index[:, mask]
+
+    # assert knn didn't delete gt
+    gt_adjacency_set = set([tuple(x) for x in gt_dict['1']])
+    # assert no ground truth has been lost
+    test_list = graph.edge_index.t().tolist()
+    test = [list(a) in test_list for a in gt_adjacency_set]
+    assert all(a is True for a in test)
+    del test, test_list
+
+
+    # # once the graph is pruned, compute edge attributes
+    edge_attributes = torch.zeros(graph.edge_index.shape[1], EDGE_FEATURES_DIM).to(device)
 
     # Extract source and target nodes for each edge
     sources, targets = graph.edge_index
 
     # Compute x, y, h, w, and t attributes for each edge using tensor operations
-    x = (2 * (detections_coords[targets, 0] - detections_coords[sources, 0])) / (detections_coords[sources, 2] + detections_coords[targets, 2])
-    y = (2 * (detections_coords[sources, 1] - detections_coords[targets, 1])) / (detections_coords[sources, 3] + detections_coords[targets, 3])
-    h = torch.log(detections_coords[sources, 2] / detections_coords[targets, 2])
-    w = torch.log(detections_coords[sources, 3] / detections_coords[targets, 3])
-    t = (frame_times[targets] - frame_times[sources]).squeeze()
-    p = torch.zeros(graph.edge_index.shape[1]).to(device)
-
-    # Concatenate the attributes to form edge_attributes tensor
-    edge_attributes = torch.stack([x, y, h, w, t, p], dim=-1).to(device)
+    edge_attributes[:, 0] = (2 * (detections_coords[targets, 0] - detections_coords[sources, 0])) / (
+                detections_coords[sources, 2] + detections_coords[targets, 2])
+    edge_attributes[:, 1] = (2 * (detections_coords[sources, 1] - detections_coords[targets, 1])) / (
+                detections_coords[sources, 3] + detections_coords[targets, 3])
+    edge_attributes[:, 2] = torch.log(detections_coords[sources, 2] / detections_coords[targets, 2])
+    edge_attributes[:, 3] = torch.log(detections_coords[sources, 3] / detections_coords[targets, 3])
+    edge_attributes[:, 4] = (frame_times[targets] - frame_times[sources]).squeeze() / frame_times[-1]
+    edge_attributes[:, 5] = distance_matrix[sources, targets]
 
     graph.edge_attr = edge_attributes
 
@@ -195,7 +176,7 @@ class MotTrack:
                  logging_lv: int = logging.INFO,
                  name: str = "track",
                  classification=False,
-                 backbone: str = 'resnet50'):
+                 backbone:str = 'resnet50'):
 
         # Set logging level
         logging.getLogger().setLevel(logging_lv)
@@ -252,8 +233,6 @@ class MotTrack:
         frame_times = torch.zeros((number_of_detections, 1), dtype=torch.int16).to(self.device)
         image_container = torch.zeros((number_of_detections, channels, self.det_resize[1], self.det_resize[0]),
                                       dtype=self.dtype).to(self.device)
-        node_features = torch.zeros((number_of_detections, self.backbone.output_dim),
-                                    dtype=self.dtype).to(self.device)
 
         # Process all frames images
         for image in pbar:
@@ -283,55 +262,7 @@ class MotTrack:
             i += 1
         with torch.no_grad():
             node_features = self.backbone(image_container)
-        """
-        Node linkage
-        """
 
-        # `linkage_window` determines the type of linkage between detections.
-
-        # LINKAGE TYPE: ALL (`linkage_window` = -1)
-        #   Connect frames detections with ALL detections from different frames
-
-        # LINKAGE TYPE: ADJACENT (`linkage_window` = 0)
-        #   Connect ADJACENT frames detections
-
-        # LINKAGE TYPE: WINDOW (`linkage_window` > 0)
-        #   Connect frames detections with detections up to `linkage_window` frames in the future
-
-        adjacency_list = list()  # Empty list to store edge indices
-        n_sum = [0] + np.cumsum(self.n_nodes).tolist()
-
-        pbar = tqdm(range(self.n_frames), desc="[TQDM] Linking all nodes") \
-            if self.logging_lv <= logging.INFO else range(self.n_frames)
-
-        for i in pbar:
-            current_n_sum = n_sum[i]
-            current_frame_nodes = self.n_nodes[i]
-            current_frame_nodes_indices = range(current_n_sum, current_n_sum + current_frame_nodes)
-
-            # Get the range of frames to link based on the linkage window
-            if self.linkage_window == -1:  # Link with all future frames
-                future_frames_range = range(i + 1, self.n_frames)
-            elif self.linkage_window == 0:  # Link with the next frame only
-                future_frames_range = range(i + 1, min(i + 2, self.n_frames))
-            else:  # Link with a window of future frames
-                future_frames_range = range(i + 1, min(i + self.linkage_window + 1, self.n_frames))
-
-            for k in future_frames_range:
-                future_n_sum = n_sum[k]
-                future_frame_nodes = self.n_nodes[k]
-                future_frame_nodes_indices = range(future_n_sum, future_n_sum + future_frame_nodes)
-
-                # For each combination of current node and future node, create an edge
-                for j in current_frame_nodes_indices:
-                    for l in future_frame_nodes_indices:
-                        adjacency_list.append([j, l])
-                        # adjacency_list.append([l, j]) # ----------------------------------------------------------------
-
-        adjacency_list = torch.tensor(adjacency_list).to(torch.int16).to(self.device)
-
-        logging.info(f"{len(node_features)} total nodes")
-        logging.info(f"{len(adjacency_list)} total edges")
 
         """
         Node linkage - ground truth
@@ -339,6 +270,7 @@ class MotTrack:
 
         gt_adjacency_list = None
 
+        n_sum = [0] + np.cumsum(self.n_nodes).tolist()
         # If detections ids are available (!= -1)
         if self.detections[0][0]['id'] != -1:
 
@@ -404,7 +336,9 @@ class MotTrack:
         """
 
         return {
-            "adjacency_list": adjacency_list,
+            # "adjacency_list": adjacency_list,
+            'n_nodes':self.n_nodes,
+            'linkage_window':self.linkage_window,
             "gt_dict": gt_dict,
             "detections": node_features,
             "frame_times": frame_times,
@@ -422,10 +356,10 @@ class MotDataset(Dataset):
                  images_directory: str = "img1",
                  name: str = None,
                  det_resize: tuple = (70, 170),
-                 linkage_window: int = -1,
-                 subtrack_len: int = -1,
-                 slide: int = 1,
-                 dl_mode: bool = False,
+                 linkage_window: int = 5,
+                 subtrack_len: int = 15,
+                 slide: int = 10,
+                 dl_mode: bool = True,
                  black_and_white_features=False,
                  naive_pruning_args=None,
                  knn_pruning_args=None,
@@ -436,7 +370,7 @@ class MotDataset(Dataset):
                  preprocessing: bool = False,
                  preprocessed: bool = True,
                  preprocessed_data_folder: str = 'preprocessed_data',
-                 feature_extraction_backbone: str = "resnet50"
+                 feature_extraction_backbone:str = "resnet50"
                  ):
         self.dataset_dir = dataset_path
         self.split = split
@@ -498,7 +432,7 @@ class MotDataset(Dataset):
         operation = "classification" if self.classification else "regression"
         path = os.path.normpath(
             os.path.join(
-                self.preprocessed_data_folder, operation, self.name, self.backbone,
+                self.preprocessed_data_folder, operation, self.name,self.backbone,
                 self.tracklist[self.cur_track]
             )
         )

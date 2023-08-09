@@ -1,5 +1,6 @@
 import argparse
-
+import os
+import torch
 from torch_geometric.transforms import ToDevice
 from tqdm import tqdm
 
@@ -7,10 +8,12 @@ from motclass import MotDataset
 from utilities import *
 
 
+
+
 # %% Function definitions
-def test(model, val_loader, loss_function, output_file_folder="outcomes", device="cuda", loss_not_initialized=True,
-         alpha=.95,
-         gamma=2, reduction='mean', one_threshold=0.5, zero_threshold=0.33):
+def test(model, val_loader, loss_function, output_file_folder="outcomes", device="cuda", loss_not_initialized=True, alpha=.95,
+     gamma=2, reduction='mean', one_threshold=0.5, zero_threshold = 0.33):
+
     # TODO
     def trajectories_to_csv():
         pass
@@ -18,6 +21,7 @@ def test(model, val_loader, loss_function, output_file_folder="outcomes", device
     # focal loss is implemented differently from the others
     if loss_not_initialized:
         loss_function = loss_function(alpha=alpha, gamma=gamma, reduction=reduction)
+
 
     outcomes = dict()
 
@@ -44,7 +48,7 @@ def test(model, val_loader, loss_function, output_file_folder="outcomes", device
             zero_mask = pred_edges < zero_threshold
             one_mask = pred_edges > one_threshold
 
-            pred_edges = torch.where(one_mask, 1., pred_edges)
+            pred_edges = torch.where(one_mask , 1., pred_edges)
             pred_edges = torch.where(zero_mask, 0, pred_edges)
 
             zero_mask = gt_edges < zero_threshold
@@ -63,7 +67,6 @@ def test(model, val_loader, loss_function, output_file_folder="outcomes", device
         pbar_dl.set_description(
             f'[TQDM] Testing on track {cur_track_idx}/{len(val_loader.tracklist)} ({cur_track_name}) - {avg_val_loss_msg} | {last_val_acc}')
 
-
 # CLI args parser (should be ok)
 # ---------------------------------------------------------------------------------------------------------------------
 parser = argparse.ArgumentParser(
@@ -72,8 +75,9 @@ parser = argparse.ArgumentParser(
     epilog='Es: python predict.py -D "datasets" -m "timeaware_500_resnet50-backbone.pkl" --MOT MOT20',
     formatter_class=argparse.RawTextHelpFormatter)
 
+
 parser.add_argument('-D', '--datapath', default="/media/dmmp/vid+backup/Data", help="""Dataset path
-NB: This project assumes a MOT dataset, this project has been tested with MOT17 and MOT20""")  # TODO: remove the default option before deployment
+NB: This project assumes a MOT dataset, this project has been tested with MOT17 and MOT20""") # TODO: remove the default option before deployment
 parser.add_argument('--model_savepath', default="saves/models", help="""Folder where models are loaded""")
 parser.add_argument('--output_savepath', default="saves/outputs", help="""Folder where outputs are saved""")
 parser.add_argument('-m', '--model', default="timeaware_500_resnet50-backbone.pkl.bak", help="""Name of the network
@@ -87,15 +91,15 @@ parser.add_argument('-L', '--loss_function', default="huber", help="""Loss funct
 Implemented losses: huber, bce, focal, dice""")
 parser.add_argument('--reduction', default="mean", help="""Reduction logic for the loss
 Implemented reductions: mean, sum""")
-parser.add_argument('-a', '--alpha', default=0.95, type=float, help="""Alpha parameter for the focal loss
+parser.add_argument('-a', '--alpha', default=0.95,type=float, help="""Alpha parameter for the focal loss
 TODO: describe how it works""")  # TODO
-parser.add_argument('-g', '--gamma', default=2., type=float, help="""Gamma parameter for the focal loss
+parser.add_argument('-g', '--gamma', default=2.,type=float, help="""Gamma parameter for the focal loss
 TODO: describe how it works""")  # TODO
-parser.add_argument('-d', '--delta', default=.4, type=float, help="""Delta parameter for the huber loss
+parser.add_argument('-d', '--delta', default=.4,type=float, help="""Delta parameter for the huber loss
 TODO: describe how it works""")  # TODO
-parser.add_argument('--one_threshold', default=.5, type=float, help="""Threshold to transform a weight to 1
+parser.add_argument('--one_threshold', default=.5,type=float, help="""Threshold to transform a weight to 1
 TODO: describe how it works""")  # TODO
-parser.add_argument('--zero_threshold', default=.33, type=float, help="""Threshold to transform a weight to 0
+parser.add_argument('--zero_threshold', default=.33,type=float, help="""Threshold to transform a weight to 0
 TODO: describe how it works""")  # TODO
 parser.add_argument('--detection_gt_folder', default="gt", help="""detection ground truth folder""")
 parser.add_argument('--detection_gt_file', default="MOT17-02-DPM.txt", help="""detection ground truth folder""")
@@ -108,8 +112,7 @@ NB: suggested to be subtrack len - linkage window""")
 parser.add_argument('-k', '--knn', default=20, type=int, help="""K parameter for knn reduction
 NB: a value lower than 20 may exclude ground truths. Set to 0 for no knn""")
 parser.add_argument('--cosine', action='store_true', help="""Use cosine distance instead of euclidean distance""")
-parser.add_argument('--classification', action='store_true',
-                    help="""Work in classification setting instead of regression""")
+parser.add_argument('--classification', action='store_true', help="""Work in classification setting instead of regression""")
 args = parser.parse_args()
 # ---------------------------------------------------------------------------------------------------------------------
 
