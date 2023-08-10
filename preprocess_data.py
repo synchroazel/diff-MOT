@@ -8,14 +8,26 @@ from motclass import MotDataset
 from utilities import *
 
 # todo: cli args
+parser = argparse.ArgumentParser(
+    prog='python train.py',
+    description='Script for training a graph network on the MOT task',
+    epilog='Es: python train.py',
+    formatter_class=argparse.RawTextHelpFormatter)
 
-dataset = "MOT17"
-classification=True
+parser.add_argument('-m', '--mot', default="MOT17", type=str)
+parser.add_argument('--classification', action='store_true')
 
-data_loader = MotDataset(dataset_path="/media/dmmp/vid+backup/Data/MOT17",
+args = parser.parse_args()
+
+
+
+dataset = args.mot
+classification = args.classification
+
+data_loader = MotDataset(dataset_path="/media/dmmp/vid+backup/Data/" + dataset,
                          split="train",
-                         subtrack_len=20,
-                         slide=15,
+                         subtrack_len=15,
+                         slide=10,
                          linkage_window=5,
                          detections_file_folder="gt",
                          detections_file_name="gt.txt",

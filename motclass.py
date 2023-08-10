@@ -124,17 +124,19 @@ def build_graph(linkage_window: int,
     # Extract source and target nodes for each edge
     sources, targets = graph.edge_index
 
-    # Compute x, y, h, w, and t attributes for each edge using tensor operations
-    edge_attributes[:, 0] = (2 * (detections_coords[targets, 0] - detections_coords[sources, 0])) / (
-            detections_coords[sources, 2] + detections_coords[targets, 2])
-    edge_attributes[:, 1] = (2 * (detections_coords[sources, 1] - detections_coords[targets, 1])) / (
-            detections_coords[sources, 3] + detections_coords[targets, 3])
-    edge_attributes[:, 2] = torch.log(detections_coords[sources, 2] / detections_coords[targets, 2])
-    edge_attributes[:, 3] = torch.log(detections_coords[sources, 3] / detections_coords[targets, 3])
-    edge_attributes[:, 4] = (frame_times[targets] - frame_times[sources]).squeeze() / frame_times[-1]
-    edge_attributes[:, 5] = 1 / distance_matrix[sources, targets]
+    # avoid infinity with EPSILON
 
-    graph.edge_attr = edge_attributes.add(1e-5)
+    # Compute x, y, h, w, and t attributes for each edge using tensor operations
+    edge_attributes[:, 0] = (2 * (detections_coords[targets, 0] - detections_coords[sources, 0])) / ((
+            detections_coords[sources, 2] + detections_coords[targets, 2]) + EPSILON)
+    edge_attributes[:, 1] = (2 * (detections_coords[sources, 1] - detections_coords[targets, 1])) / (
+        (detections_coords[sources, 3] + detections_coords[targets, 3]) + EPSILON)
+    edge_attributes[:, 2] = torch.log(detections_coords[sources, 2] / (detections_coords[targets, 2]) + EPSILON)
+    edge_attributes[:, 3] = torch.log(detections_coords[sources, 3] / (detections_coords[targets, 3]) + EPSILON)
+    edge_attributes[:, 4] = (frame_times[targets] - frame_times[sources]).squeeze() / (frame_times[-1] + EPSILON)
+    edge_attributes[:, 5] = 1 / (distance_matrix[sources, targets] + EPSILON)
+
+    graph.edge_attr = edge_attributes
 
     # Build `y` tensor to compare predictions with gt
     weight_potencies = list(gt_dict.keys())
