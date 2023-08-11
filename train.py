@@ -77,6 +77,7 @@ def train(model, train_loader, val_loader, loss_function, optimizer, epochs, dev
     pbar_ep = tqdm(range(epochs), desc='[TQDM] Epoch #1 ', position=0, leave=False,
                    bar_format="{desc:<5}{percentage:3.0f}%|{bar}{r_bar}")
 
+    average_train_loss, average_val_loss = 1e3, 1e3
     for epoch in pbar_ep:
 
         epoch_info = {
@@ -108,7 +109,8 @@ def train(model, train_loader, val_loader, loss_function, optimizer, epochs, dev
             # On track switch, save the model
             if cur_track_idx != last_track_idx and cur_track_idx != 1:
                 save_model(model, mps_fallback=mps_fallback, classification=classification, epoch=epoch,
-                           track_name=cur_track_name, epoch_info= epoch_info)
+                           track_name=cur_track_name, epoch_info= epoch_info, node_model_name=model.model_dict['node_name'],
+                           edge_model_name=model.model_dict['edge_name'])
 
             """ Training step """
 
@@ -164,10 +166,10 @@ def train(model, train_loader, val_loader, loss_function, optimizer, epochs, dev
             epoch_info['tracklets'].append(i)
             epoch_info['avg_train_losses' ].append(average_train_loss)
             epoch_info['avg_val_losses'   ].append(average_val_loss  )
-            epoch_info['avg_accuracy_on_1'].append(average_0acc      )
-            epoch_info['avg_accuracy_on_0'].append(average_0err      )
-            epoch_info['avg_error_on_1'   ].append(average_1acc      )
-            epoch_info['avg_error_on_0'   ].append(average_1err      )
+            epoch_info['avg_accuracy_on_1'].append(average_1acc      )
+            epoch_info['avg_accuracy_on_0'].append(average_0acc     )
+            epoch_info['avg_error_on_1'   ].append(average_1err      )
+            epoch_info['avg_error_on_0'   ].append(average_0err      )
 
 
             """ Update progress """
@@ -186,6 +188,7 @@ def train(model, train_loader, val_loader, loss_function, optimizer, epochs, dev
             last_track_idx = cur_track_idx
 
         pbar_ep.set_description(f'[TQDM] Epoch #{epoch + 1} - avg.Loss: {(total_train_loss / (i + 1)):.4f}')
+    return average_train_loss, average_val_loss
 
 
 # CLI args parser
@@ -252,9 +255,9 @@ args = parser.parse_args()
 
 # todo remove, used only for debug
 # -------------------------------------------------------------------------------------------------------------------
-args.classification = True
-args.loss_function = "focal"
-args.model = 'transformer'
+# args.classification = True
+# args.loss_function = "focal"
+# args.model = 'transformer'
 # -------------------------------------------------------------------------------------------------------------------
 
 
@@ -422,7 +425,12 @@ print("\tLearning rate: " + str(learning_rate))
 
 # %% Train the model
 
-train(model, mot_train_dl, mot_val_dl, loss_function, optimizer, epochs, device, mps_fallback,
+train_loss, val_loss = train(model, mot_train_dl, mot_val_dl, loss_function, optimizer, epochs, device, mps_fallback,
       loss_not_initialized=loss_not_initialized, alpha=alpha,
       gamma=gamma, reduction=reduction, classification=classification
       )
+
+
+print("\nFinal train loss: " + str(train_loss))
+
+print("\nFinal validation loss: " + str(val_loss))

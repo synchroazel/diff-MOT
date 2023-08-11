@@ -89,18 +89,22 @@ def save_model(model: torch.nn.Module,
                classification:bool=False,
                epoch:int=0,
                track_name:str='',
-               epoch_info:dict = None):
+               epoch_info:dict = None,
+               node_model_name='timeaware',
+               edge_model_name='base'):
     if mps_fallback:
         model.to(torch.device('cpu'))
 
     # path components
     technique = "classification" if classification else "regression"
     epoch = "Epoch_" + str(epoch)
+    model_name = node_model_name+"_"+edge_model_name
 
     savepath = os.path.normpath(
         os.path.join(
             savepath,
             technique,
+            model_name,
             epoch,
             track_name
         )
