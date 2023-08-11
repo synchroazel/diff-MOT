@@ -131,8 +131,12 @@ def build_graph(linkage_window: int,
             detections_coords[sources, 2] + detections_coords[targets, 2]) + EPSILON)
     edge_attributes[:, 1] = (2 * (detections_coords[sources, 1] - detections_coords[targets, 1])) / (
         (detections_coords[sources, 3] + detections_coords[targets, 3]) + EPSILON)
-    edge_attributes[:, 2] = torch.log(detections_coords[sources, 2] / (detections_coords[targets, 2]) + EPSILON)
-    edge_attributes[:, 3] = torch.log(detections_coords[sources, 3] / (detections_coords[targets, 3]) + EPSILON)
+    edge_attributes[:, 2] = torch.log(
+        (detections_coords[sources, 2] / (detections_coords[targets, 2]+ EPSILON)).abs()
+    )
+    edge_attributes[:, 3] = torch.log(
+        (detections_coords[sources, 3] / (detections_coords[targets, 3]+ EPSILON)).abs()
+    )
     edge_attributes[:, 4] = (frame_times[targets] - frame_times[sources]).squeeze() / (frame_times[-1] + EPSILON)
     edge_attributes[:, 5] = 1 / (distance_matrix[sources, targets] + EPSILON)
 

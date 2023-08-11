@@ -45,7 +45,6 @@ def single_validate(model, val_loader, idx, loss_function, device,loss_not_initi
         pred_edges = torch.where(one_mask, 1., pred_edges)
         pred_edges = torch.where(zero_mask, 0., pred_edges)
 
-
         if classification:
             zero_mask = gt_edges <= one_treshold
             one_mask = gt_edges > one_treshold
@@ -57,6 +56,9 @@ def single_validate(model, val_loader, idx, loss_function, device,loss_not_initi
         acc_zeros = torch.where(pred_edges[zero_mask] == 0., 1., 0.).mean()
         ones_as_zeros = torch.where(pred_edges[one_mask] == 0., 1., 0.).mean()
         zeros_as_ones = torch.where(pred_edges[zero_mask] == 1., 1., 0.).mean()
+
+        if any([loss.isnan().item(), acc_ones.isnan().item(), acc_zeros.isnan().item(), zeros_as_ones.isnan().item(), ones_as_zeros.isnan().item()]):
+            raise Exception("saduygsauygfuyasfgbv")
 
         return loss.item(), acc_ones.item(), acc_zeros.item(), zeros_as_ones.item(), ones_as_zeros.item()
 
@@ -121,6 +123,8 @@ def train(model, train_loader, val_loader, loss_function, optimizer, epochs, dev
 
 
             if torch.isnan(train_loss):
+                # debug
+                pred_edges = model(data)
                 raise Exception("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
                 pass
             # Backward and optimize
@@ -225,7 +229,7 @@ parser.add_argument('-l', '--learning_rate', default=0.0001, type=float, help=""
 parser.add_argument('--dropout', default=0.3, type=float, help="""dropout""")
 parser.add_argument('--optimizer', default="AdamW", help="""Optimizer to use
 TODO: put available optimizers""")  # TODO
-parser.add_argument('--alpha', default=0.05, type=float, help="""Alpha parameter for the focal loss
+parser.add_argument('--alpha', default=0.95, type=float, help="""Alpha parameter for the focal loss
 TODO: describe how it works""")  # TODO
 parser.add_argument('--gamma', default=5., type=float, help="""Gamma parameter for the focal loss
 TODO: describe how it works""")  # TODO
@@ -248,8 +252,9 @@ args = parser.parse_args()
 
 # todo remove, used only for debug
 # -------------------------------------------------------------------------------------------------------------------
-args.classification = False
+args.classification = True
 args.loss_function = "focal"
+args.model = 'transformer'
 # -------------------------------------------------------------------------------------------------------------------
 
 
@@ -389,7 +394,7 @@ print("[INFO] hyper parameters:")
 print("\nDatasets:")
 print("\tDataset used for training: " + mot_train + " | validation: " + mot_val)
 print("\tSubtrack lenght: " + str(subtrack_len) + "\n\t" +
-        "Linkage window: " + str(linkage_window) + "\n\t" +
+      "Linkage window: " + str(linkage_window) + "\n\t" +
       "Slide: " + str(slide) + "\n\t" +
       "Knn : " + str(knn_args['k']))
 if classification:

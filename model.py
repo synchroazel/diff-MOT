@@ -8,6 +8,7 @@ from efficientnet_pytorch import EfficientNet
 from torch import Tensor
 from torch import nn
 from torch.nn import Parameter
+from torch_geometric.nn import GATv2Conv
 from torch_geometric.nn.conv import MessagePassing
 from torch_geometric.nn.dense.linear import Linear
 from torch_geometric.nn.inits import glorot, zeros
@@ -45,7 +46,13 @@ from  utilities import *
 
 class ImgEncoder(torch.nn.Module):
     output_dims = {
-        'resnet50': 2048
+        'resnet50': 2048,
+        'resnet101': 2048,
+        'vit_l_32': 1024,
+        'vgg16': 4096,
+        'vgg19': 4096,
+        # 'efficientnet-b0': 1000,
+        # 'efficientnet-b7':2560
     }
 
     def __init__(self, model_name: str, weights: str = "DEFAULT", dtype=torch.float32):
@@ -87,10 +94,10 @@ class ImgEncoder(torch.nn.Module):
 
 
 class EdgePredictorFromEdges(torch.nn.Module):
-    def __init__(self, in_channels, hidden_channels):
+    def __init__(self, in_channels, out_channels):
         super().__init__()
-        self.lin1 = nn.Linear(in_channels, hidden_channels)
-        self.lin2 = nn.Linear(hidden_channels, 1)
+        self.lin1 = nn.Linear(in_channels, out_channels)
+        self.lin2 = nn.Linear(out_channels, 1)
 
     def forward(self, edge_attr):
         x = F.leaky_relu(self.lin1(edge_attr))
@@ -101,10 +108,10 @@ class EdgePredictorFromEdges(torch.nn.Module):
 
 
 class EdgePredictorFromNodes(torch.nn.Module):
-    def __init__(self, in_channels, hidden_channels):
+    def __init__(self, in_channels, out_channels):
         super().__init__()
-        self.lin1 = nn.Linear(in_channels * 2, hidden_channels)
-        self.lin2 = nn.Linear(hidden_channels, 1)
+        self.lin1 = nn.Linear(in_channels * 2, out_channels)
+        self.lin2 = nn.Linear(out_channels, 1)
 
     def forward(self, x_i, x_j):
         # x_i and x_j have shape [E, in_channels]
@@ -117,10 +124,12 @@ class EdgePredictorFromNodes(torch.nn.Module):
 # ok
 class TransformerConvWithEdgeUpdate(torch_geometric.nn.TransformerConv):
     def __init__(self,
-                 edge_model:bool=True,
-                 agg_future=None, agg_past=None, agg_base=None,
-                 **kwargs):
-        super(TransformerConvWithEdgeUpdate, self).__init__(**kwargs)
+                 edge_model: bool = False,
+                 in_channels:int = 500, out_channels:int = 500,
+                 heads:int=1, dropout:float=.3,
+                 **padding_kwargs):
+        super(TransformerConvWithEdgeUpdate, self).__init__(in_channels=in_channels, out_channels=out_channels,heads=heads,
+                                                            dropout=dropout)
         self.edge_model = edge_model
 
     def message(self, query_i: Tensor, key_j: Tensor, value_j: Tensor,
@@ -142,7 +151,10 @@ class TransformerConvWithEdgeUpdate(torch_geometric.nn.TransformerConv):
 
         out = value_j
         if edge_attr is not None:
-            out = out + edge_attr
+            try:
+                out += edge_attr
+            except:
+                pass
 
         # out = torch.mean(out, dim=1)
         out = out * alpha.view(-1, self.heads, 1)
@@ -153,7 +165,7 @@ class TransformerConvWithEdgeUpdate(torch_geometric.nn.TransformerConv):
         return out
 
     def forward(self, x: Union[Tensor, PairTensor], edge_index: Adj,
-                edge_attr: OptTensor = None, return_attention_weights=None):
+                edge_attr = None, u=None, batch=None, return_attention_weights=None):
         r"""Runs the forward pass of the module.
 
         Args:
@@ -212,7 +224,7 @@ class TransformerConvWithEdgeUpdate(torch_geometric.nn.TransformerConv):
 
 class BaseEdgeModel(torch.nn.Module):
     def __init__(self, n_features, n_edge_features, hiddens, n_targets, residuals, **model_kwargs):
-        super().__init__()
+        super(BaseEdgeModel,self).__init__()
         self.residuals = residuals
         self.edge_mlp = nn.Sequential(
             nn.Linear(2 * n_features + n_edge_features, hiddens),
@@ -234,7 +246,7 @@ class BaseEdgeModel(torch.nn.Module):
 
 class TimeAwareNodeModel(torch.nn.Module):
     def __init__(self, n_features, n_edge_features, hiddens, n_targets, residuals, agg_future: str, agg_past: str,
-                 agg_base=None, ):
+                 **padding_kwargs):
         super(TimeAwareNodeModel, self).__init__()
         self.residuals = residuals
         self.node_mlp_future = nn.Sequential(
@@ -300,29 +312,23 @@ class TimeAwareNodeModel(torch.nn.Module):
         return out
 
 
-class GATv2ConvWithEdgeUpdate(MessagePassing):
-
-    _alpha: OptTensor
+class GATv2ConvWithEdgeUpdate(GATv2Conv):
 
     def __init__(
         self,
-        edge_model:bool = True,
-        agg_future=None, agg_past=None, agg_base:str='mean',
-            n_features:int=2048, n_edge_features:int=6, hiddens:int=256,
-            n_targets:int=256, residuals:bool=False, heads:int=6,
-        **kwargs,
+            in_channels:int=256, out_channels:int=256,
+            dropout:float=.3, agg_base:str='mean',
+            n_edge_features:int=6,
+             heads:int=6,
+        **padding_kwargs,
     ):
-        super().__init__(node_dim=0, **kwargs)
+        super(GATv2ConvWithEdgeUpdate,self).__init__(node_dim=0,
+                                                     in_channels=in_channels, out_channels=out_channels,
+                                                      heads=heads, dropout=dropout, add_self_loops=False,
+                                                      edge_dim=n_edge_features, fill_value=agg_base)
 
-        self.in_channels = n_features
-        self.out_channels = n_targets
-        self.heads = heads
         self.concat = False
         self.negative_slope = 0.4
-        self.dropout = 0.3
-        self.add_self_loops = False
-        self.edge_dim = n_edge_features
-        self.fill_value = agg_base
 
 
         self.lin_l = Linear(self.in_channels, heads * self.out_channels,
@@ -420,12 +426,7 @@ class GATv2ConvWithEdgeUpdate(MessagePassing):
         x = x_i + x_j
 
         if edge_attr is not None:
-        #     if edge_attr.dim() == 1:
-        #         edge_attr = edge_attr.view(-1, 1)
-        #     assert self.lin_edge is not None
-        #     edge_attr = self.lin_edge(edge_attr)
-        #     edge_attr = edge_attr.view(-1, self.heads, self.out_channels)
-            x = x + edge_attr # ----> edges are updeted here <-----
+            x += edge_attr  # ----> edges are updeted here <-----
             self.__edge_attr__ = edge_attr
 
         x = F.leaky_relu(x, self.negative_slope)
@@ -442,13 +443,14 @@ class GATv2ConvWithEdgeUpdate(MessagePassing):
 
 # todo: integrate aggregation in other models
 def build_custom_mp(n_target_nodes, n_target_edges, n_features, n_edge_features, layer_size, residuals, model_dict:dict,
-                    future_aggregation:str='sum', past_aggregation='mean',base_aggregation='sum',device="cuda"):
+                    future_aggregation:str='sum', past_aggregation='mean',base_aggregation='sum',device="cuda",
+                    heads:int=3, dropout:float=.3 ):
     edge_model = model_dict['edge'](n_features=n_features, n_edge_features=n_edge_features, hiddens=layer_size,
                                     n_targets=n_target_edges, residuals=residuals)
     node_model = model_dict['node'](n_features=n_features, n_edge_features=n_target_edges, hiddens=layer_size,
                                     n_targets=n_target_nodes, residuals=residuals,
-                                    agg_future=future_aggregation, agg_past=past_aggregation, agg_base=base_aggregation) #,
-                                    # in_channels=n_features, out_channels=layer_size)
+                                    agg_future=future_aggregation, agg_past=past_aggregation, agg_base=base_aggregation,
+                                    in_channels=n_features, out_channels=n_target_nodes, heads=heads, dropout=dropout)
     return torch_geometric.nn.MetaLayer(
         edge_model=edge_model,
         node_model=node_model
@@ -464,6 +466,8 @@ class Net(torch.nn.Module):
                  layer_size=256,
                  n_target_nodes=256,
                  n_target_edges=256,
+                 heads:int=3,
+                 dropout:float=.3,
                  steps=2,
                  edge_features_dim=EDGE_FEATURES_DIM,
                  residuals: bool = True,
@@ -488,26 +492,29 @@ class Net(torch.nn.Module):
 
         self.conv_in = build_custom_mp(n_target_nodes=n_target_nodes, n_target_edges=n_target_edges, n_features=self.node_features_dim, n_edge_features=edge_features_dim,
                                        layer_size=layer_size, residuals=residuals, device=device, model_dict=model_dict, future_aggregation=future_aggregation,
-                                       past_aggregation=past_aggregation, base_aggregation=base_aggregation)
+                                       past_aggregation=past_aggregation, base_aggregation=base_aggregation, heads=heads, dropout=dropout)
 
         kwargs['edge_dim'] = layer_size
-        kwargs['in_edge_channels'] = layer_size * kwargs['heads']
+        kwargs['in_edge_channels'] = layer_size * heads
 
         self.number_of_message_passing_layers = steps
-
+        if self.model_dict['node_name'] != 'timeaware':
+            in_features = n_target_nodes * heads
+        else:
+            in_features = n_target_nodes
         self.conv = []
         for i in range(steps - 1):
             # self.conv.append(self.layer_aliases[layer_tipe](in_channels=-1, out_channels=layer_size, **kwargs))
             self.conv.append(
-                build_custom_mp(n_target_nodes=n_target_nodes, n_target_edges=n_target_edges, n_features=n_target_nodes, n_edge_features=n_target_edges,
-                                layer_size=layer_size, residuals=residuals, device=device, model_dict=model_dict)
+                build_custom_mp(n_target_nodes=n_target_nodes, n_target_edges=n_target_edges, n_features=in_features, n_edge_features=n_target_edges,
+                                layer_size=layer_size, residuals=residuals, device=device, model_dict=model_dict, heads=heads, dropout=dropout)
             )
 
         # self.predictor = EdgePredictor(layer_size, layer_size)
         if is_edge_model:
-            self.predictor = EdgePredictorFromEdges(in_channels=n_target_edges, hidden_channels=layer_size)
+            self.predictor = EdgePredictorFromEdges(in_channels=n_target_edges, out_channels=layer_size)
         else:
-            self.predictor = EdgePredictorFromNodes(in_channels=n_target_nodes, hidden_channels=layer_size)
+            self.predictor = EdgePredictorFromNodes(in_channels=n_target_nodes, out_channels=layer_size)
         self.dtype = dtype
         self.device = device  # get the device the model is currently on
         self.mps_fallback = mps_fallback
