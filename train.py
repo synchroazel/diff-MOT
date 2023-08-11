@@ -68,7 +68,7 @@ def single_validate(model, val_loader, idx, loss_function, device,loss_not_initi
 def train(model, train_loader, val_loader, loss_function, optimizer, epochs, device, mps_fallback=False,
           loss_not_initialized=True, alpha=.95,
           gamma=2, reduction='mean', classification=False
-          ):
+          ) -> (float, float):
     model = model.to(device)
     model.train()
 
@@ -106,11 +106,6 @@ def train(model, train_loader, val_loader, loss_function, optimizer, epochs, dev
             pbar_dl.set_description(
                 f'[TQDM] Training on track {cur_track_idx}/{len(train_loader.tracklist)} ({cur_track_name})')
 
-            # On track switch, save the model
-            if cur_track_idx != last_track_idx and cur_track_idx != 1:
-                save_model(model, mps_fallback=mps_fallback, classification=classification, epoch=epoch,
-                           track_name=cur_track_name, epoch_info= epoch_info, node_model_name=model.model_dict['node_name'],
-                           edge_model_name=model.model_dict['edge_name'])
 
             """ Training step """
 
@@ -188,6 +183,9 @@ def train(model, train_loader, val_loader, loss_function, optimizer, epochs, dev
             last_track_idx = cur_track_idx
 
         pbar_ep.set_description(f'[TQDM] Epoch #{epoch + 1} - avg.Loss: {(total_train_loss / (i + 1)):.4f}')
+        save_model(model, mps_fallback=mps_fallback, classification=classification, epoch=epoch, epoch_info=epoch_info,
+                   node_model_name=model.model_dict['node_name'],
+                   edge_model_name=model.model_dict['edge_name'])
     return average_train_loss, average_val_loss
 
 
@@ -236,7 +234,7 @@ parser.add_argument('--alpha', default=0.95, type=float, help="""Alpha parameter
 TODO: describe how it works""")  # TODO
 parser.add_argument('--gamma', default=5., type=float, help="""Gamma parameter for the focal loss
 TODO: describe how it works""")  # TODO
-parser.add_argument('--delta', default=.1, type=float, help="""Delta parameter for the huber loss
+parser.add_argument('--delta', default=.3, type=float, help="""Delta parameter for the huber loss
 TODO: describe how it works""")  # TODO
 parser.add_argument('--detection_gt_folder', default="gt", help="""detection ground truth folder""")
 parser.add_argument('--detection_gt_file', default="gt.txt", help="""detection ground truth folder""")

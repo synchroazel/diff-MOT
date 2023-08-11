@@ -7,7 +7,7 @@ if __name__ == '__main__':
     parser.add_argument('--tracker_path', type=str, default='trackers',
                         help='Path to the folder containing all trackers.')
 
-    parser.add_argument('--split', type=str, default='MOT17-prova',
+    parser.add_argument('--split', type=str, default='MOT17-train-all',
                         help='The name of the seqmap containing the list of tracks to evaluate.\n'
                              'All seqmaps for MOTX are assumed to be in MOTX/seqmaps.')
 

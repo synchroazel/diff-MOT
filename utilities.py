@@ -88,7 +88,6 @@ def save_model(model: torch.nn.Module,
                mps_fallback: bool = False,
                classification:bool=False,
                epoch:int=0,
-               track_name:str='',
                epoch_info:dict = None,
                node_model_name='timeaware',
                edge_model_name='base'):
@@ -105,8 +104,7 @@ def save_model(model: torch.nn.Module,
             savepath,
             technique,
             model_name,
-            epoch,
-            track_name
+            epoch
         )
     )
     create_folders(savepath)

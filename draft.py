@@ -1,3 +1,4 @@
+import networkx as nx
 import pandas
 import torch
 import torchvision
@@ -26,13 +27,13 @@ data_loader = MotDataset(dataset_path='/media/dmmp/vid+backup/Data/MOT17',
                          dtype=torch.float32,
                          classification=True)
 
-#model = load_model_pkl("saves/models/timeaware_500_resnet50-backbone.pkl", device=device)  # regression
+model = load_model_pkl("models_to_try/node-predictor_node-model-timeaware_edge-model-base_layer-size-500_backbone-resnet50_past-mean-future-sum.pkl", device=device)  # regression
 # model.mps_fallback = True
 
 #model.eval()
 
 #model = model.to(device)
-model =None
+# model =None
 
 nodes_dict = {}  # frame, bbox
 id = 1
@@ -56,11 +57,17 @@ def build_trajectory_rec(node_idx:int, pyg_graph, nx_graph, node_dists, nodes_to
     global final_df
     global track_frame
 
+    n1_frame = track_frame + pyg_graph.times[node_idx].tolist()[0]
+    n1_coords = torchvision.ops.box_convert(pyg_graph.detections_coords[node_idx], 'xyxy', 'xywh').tolist()
+    c1 = (n1_frame, *n1_coords) in nodes_dict.keys()
+    if c1 and nodes_dict[(n1_frame, *n1_coords)][1]:
+        return False
+
     new_id = True
     all_out_edges = nx_graph.out_edges(node_idx)
 
     # Remove edges going in the past
-    all_out_edges = [item for item in all_out_edges if item[0] < item[1]]
+    all_out_edges = [item for item in all_out_edges if ((item[0] < item[1]) and (item[1] in nodes_todo))]
 
     if len(all_out_edges) == 0:
 
@@ -72,9 +79,9 @@ def build_trajectory_rec(node_idx:int, pyg_graph, nx_graph, node_dists, nodes_to
             orp_frame = track_frame + pyg_graph.times[node_idx].tolist()[0]
 
             if (orp_frame, *orp_coords) not in nodes_dict.keys():
-                nodes_dict[(orp_frame, *orp_coords)] = id
+                nodes_dict[(orp_frame, *orp_coords)] = [id, False]
 
-            orp_id = nodes_dict[(orp_frame, *orp_coords)]
+            orp_id, _ = nodes_dict[(orp_frame, *orp_coords)]
             new_row =  {'frame': orp_frame,
                        'id': orp_id,
                        'bb_left': orp_coords[0],
@@ -93,7 +100,7 @@ def build_trajectory_rec(node_idx:int, pyg_graph, nx_graph, node_dists, nodes_to
 
     # Find best edge to keep
     # TODO: find best peso
-    best_edge_idx = torch.tensor([node_dists[n1, n2] for n1, n2 in all_out_edges]).argmin()
+    best_edge_idx = torch.tensor([nx_graph[n1][n2]['edge_weights'] for n1, n2 in all_out_edges]).argmax()
     best_edge = list(all_out_edges)[best_edge_idx]
 
     # Remove all other edges
@@ -108,24 +115,26 @@ def build_trajectory_rec(node_idx:int, pyg_graph, nx_graph, node_dists, nodes_to
     del nodes_todo[n2]
 
 
-    n1_coords = torchvision.ops.box_convert(pyg_graph.detections_coords[n1], 'xyxy','xywh').tolist()
+
     n2_coords = torchvision.ops.box_convert(pyg_graph.detections_coords[n2], 'xyxy','xywh').tolist()
 
-    n1_frame = track_frame + pyg_graph.times[n1].tolist()[0]
+
     n2_frame = track_frame + pyg_graph.times[n2].tolist()[0]
 
     # n1_coords = box_convert(n1_coords, in_fmt='xyxy', out_fmt='xywh')
     # n2_coords = box_convert(n2_coords, in_fmt='xyxy', out_fmt='xywh')
 
-    c1 = (n1_frame, *n1_coords) in nodes_dict.keys()
+
     c2 = (n2_frame, *n2_coords) in nodes_dict.keys()
-    if depth == 0 and c1:
+    if c1:
         new_id = False
     if not c1:
-        nodes_dict[(n1_frame, *n1_coords)] = id
-    node_id = nodes_dict[(n1_frame, *n1_coords)]
+        nodes_dict[(n1_frame, *n1_coords)] = [id, True]
+    else:
+        nodes_dict[(n1_frame, *n1_coords)][1] = True
+    node_id, _ = nodes_dict[(n1_frame, *n1_coords)]
     if not c2:
-        nodes_dict[(n2_frame, *n2_coords)] = node_id
+        nodes_dict[(n2_frame, *n2_coords)] = [node_id, False]
     # <frame>, <id>, <bb_left>, <bb_top>, <bb_width>, <bb_height>, <conf>, <x>, <y>, <z>
     if not c1:
         final_df.loc[len(final_df)] = {'frame': n1_frame,
@@ -167,15 +176,17 @@ def build_trajectories(graph, preds, ths=.33):
     mask = torch.where(preds > float(ths), True, False)
 
     masked_preds = preds[mask]  # Only for regression
-
     pred_edges = pyg_graph.edge_index.t()[mask]
+
 
     node_dists = torch.cdist(pyg_graph.pos, pyg_graph.pos, p=2)
 
     nodes_todo = OrderedDict([(node,node) for node in range(0, pyg_graph.num_nodes)])
     # Create a NetwrokX graph
     pyg_graph.edge_index = pred_edges.t()
-    nx_graph = to_networkx(pyg_graph)
+    pyg_graph.edge_weights = masked_preds
+
+    nx_graph = to_networkx(pyg_graph, edge_attrs=['edge_weights'])
 
     while len(nodes_todo) > 0:
         starting_point = nodes_todo.popitem(last=False)[0]
@@ -210,14 +221,14 @@ for _, data in tqdm(enumerate(data_loader), desc='[TQDM] Converting tracklet', t
                                              'y',
                                              'z'])
         # todo: remove
-        exit(1)
+        # exit(1)
 
 
 
     data = ToDevice(device.type)(data)
-    # preds = model(data)
-    # out = build_trajectories(data, preds=preds)
-    build_trajectories(data, data.y)
+    preds = model(data)
+    build_trajectories(data, preds=preds)
+    # build_trajectories(data, data.y)
     track_frame += data_loader.slide
 
 

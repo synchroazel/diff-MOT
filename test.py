@@ -70,13 +70,13 @@ def test(model, val_loader, loss_function, output_file_folder="outcomes", device
 # CLI args parser (should be ok)
 # ---------------------------------------------------------------------------------------------------------------------
 parser = argparse.ArgumentParser(
-    prog='python predict.py',
+    prog='python test.py',
     description='Script for predicting outputs given a MOT dataset',
-    epilog='Es: python predict.py -D "datasets" -m "timeaware_500_resnet50-backbone.pkl" --MOT MOT20',
+    epilog='Es: python test.py -D "datasets" -m "timeaware_500_resnet50-backbone.pkl" --MOT MOT20',
     formatter_class=argparse.RawTextHelpFormatter)
 
 
-parser.add_argument('-D', '--datapath', default="/media/dmmp/vid+backup/Data", help="""Dataset path
+parser.add_argument('-D', '--datapath', default="/media/dmmp/vid+backup/Data", type=str,help="""Dataset path
 NB: This project assumes a MOT dataset, this project has been tested with MOT17 and MOT20""") # TODO: remove the default option before deployment
 parser.add_argument('--model_savepath', default="saves/models", help="""Folder where models are loaded""")
 parser.add_argument('--output_savepath', default="saves/outputs", help="""Folder where outputs are saved""")
