@@ -1,3 +1,5 @@
+import os.path
+
 import networkx as nx
 import pandas
 import torch
@@ -6,6 +8,7 @@ from torch_geometric.transforms import ToDevice
 from torch_geometric.utils import to_networkx
 from tqdm import tqdm
 
+import utilities
 from model import Net
 from motclass import MotDataset
 from utilities import get_best_device
@@ -27,7 +30,7 @@ data_loader = MotDataset(dataset_path='/media/dmmp/vid+backup/Data/MOT17',
                          dtype=torch.float32,
                          classification=True)
 
-model = load_model_pkl("models_to_try/node-predictor_node-model-timeaware_edge-model-base_layer-size-500_backbone-resnet50_past-mean-future-sum.pkl", device=device)  # regression
+model = load_model_pkl("models_to_try/classification-node-predictor_node-model-timeaware_edge-model-base_layer-size-500_backbone-resnet50_past-mean-future-sum.pkl", device=device)  # regression
 # model.mps_fallback = True
 
 #model.eval()
@@ -126,11 +129,11 @@ def build_trajectory_rec(node_idx:int, pyg_graph, nx_graph, node_dists, nodes_to
 
 
     c2 = (n2_frame, *n2_coords) in nodes_dict.keys()
-    if c1:
-        new_id = False
+
     if not c1:
         nodes_dict[(n1_frame, *n1_coords)] = [id, True]
     else:
+        new_id = False
         nodes_dict[(n1_frame, *n1_coords)][1] = True
     node_id, _ = nodes_dict[(n1_frame, *n1_coords)]
     if not c2:
@@ -166,7 +169,8 @@ def build_trajectory_rec(node_idx:int, pyg_graph, nx_graph, node_dists, nodes_to
     return new_id
 
 # todo: cliargs
-outpath = "trackers/exp1/"
+outpath = "trackers/exp_classification/"
+utilities.create_folders(outpath)
 
 def build_trajectories(graph, preds, ths=.33):
     global nodes_dict

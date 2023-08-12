@@ -3,7 +3,8 @@ import math
 import random
 
 import numpy
-import torch
+import torch.nn.functional as F
+from torch import nn
 
 from torch_geometric.transforms import ToDevice
 from tqdm import tqdm
@@ -11,6 +12,7 @@ from tqdm import tqdm
 from model import Net, IMPLEMENTED_MODELS, ImgEncoder
 from motclass import MotDataset
 from utilities import *
+
 
 # %% Function definitions
 
@@ -218,7 +220,7 @@ parser.add_argument('-p', '--messages', default=6, type=int, help="""Number of m
 parser.add_argument('--heads', default=6, type=int, help="""Number of heads, when applicable""")
 parser.add_argument('--loss_reduction', default="mean", help="""Reduction logic for the loss
 Implemented reductions: mean, sum""")
-parser.add_argument('--model', default="timeaware", help="""Model to train
+parser.add_argument('--model', default="transformer", help="""Model to train
 Implemented models: \n\ttimeaware, transformer, attention""")
 parser.add_argument('--past_aggregation', default="mean", help="""Aggregation logic (past) for time aware
 Implemented reductions: 'sum', 'add', 'mul', 'mean, 'min', 'max', 'std', 'logsumexp', 'softmax', 'log_softmax'""")
@@ -227,10 +229,10 @@ Implemented reductions: 'sum', 'add', 'mul', 'mean, 'min', 'max', 'std', 'logsum
 parser.add_argument('--aggregation', default="mean", help="""Aggregation logic for other layers
 Implemented reductions: 'mean', 'sum'""")
 parser.add_argument('-l', '--learning_rate', default=0.0001, type=float, help="""learning rate""")
-parser.add_argument('--dropout', default=0.3, type=float, help="""dropout""")
+parser.add_argument('--dropout', default=0.2, type=float, help="""dropout""")
 parser.add_argument('--optimizer', default="AdamW", help="""Optimizer to use
 TODO: put available optimizers""")  # TODO
-parser.add_argument('--alpha', default=0.95, type=float, help="""Alpha parameter for the focal loss
+parser.add_argument('--alpha', default=0.05, type=float, help="""Alpha parameter for the focal loss
 TODO: describe how it works""")  # TODO
 parser.add_argument('--gamma', default=5., type=float, help="""Gamma parameter for the focal loss
 TODO: describe how it works""")  # TODO
@@ -322,8 +324,8 @@ match loss_type:
     case 'bce'| 'mae'| 'mse':
         loss_function = IMPLEMENTED_LOSSES[loss_type]()
     case 'focal':
-        loss_function = IMPLEMENTED_LOSSES[loss_type]
-        loss_not_initialized = True
+        loss_function = IMPLEMENTED_LOSSES[loss_type](alpha=alpha, gamma=gamma)
+        # loss_not_initialized = True
     case 'berhu':
         raise NotImplemented("BerHu loss has not been implemented yet")
     case _:
@@ -369,6 +371,8 @@ network_dict = IMPLEMENTED_MODELS[args.model]
 
 model = Net(backbone=backbone,
             layer_size=l_size,
+            n_target_edges=l_size,
+            n_target_nodes=l_size,
             dtype=dtype,
             mps_fallback=mps_fallback,
             edge_features_dim=EDGE_FEATURES_DIM,

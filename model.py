@@ -129,7 +129,7 @@ class TransformerConvWithEdgeUpdate(torch_geometric.nn.TransformerConv):
                  heads:int=1, dropout:float=.3,
                  **padding_kwargs):
         super(TransformerConvWithEdgeUpdate, self).__init__(in_channels=in_channels, out_channels=out_channels,heads=heads,
-                                                            dropout=dropout)
+                                                            dropout=dropout,concat=False)
         self.edge_model = edge_model
 
     def message(self, query_i: Tensor, key_j: Tensor, value_j: Tensor,
@@ -499,7 +499,7 @@ class Net(torch.nn.Module):
 
         self.number_of_message_passing_layers = steps
         if self.model_dict['node_name'] != 'timeaware':
-            in_features = n_target_nodes * heads
+            in_features = n_target_nodes
         else:
             in_features = n_target_nodes
         self.conv = []
@@ -564,11 +564,8 @@ class Net(torch.nn.Module):
         edge_model = "edge-model-" + self.model_dict['edge_name']
         layer_size = 'layer-size-' + str(self.layer_size)
         backbone = "backbone-" + self.used_backbone
-        if ('timeaware' in self.model_dict['node_name']) or ('timeaware' in self.model_dict['edge_name']):
-            aggregation = 'past-'+self.past_aggregation + "-future-"+ self.future_aggregation
-        else:
-            aggregation = 'aggregation-' + self.base_aggregation
-        name = '_'.join([model_type,node_model,edge_model,layer_size,backbone,aggregation])
+        messages = 'messages-' + str(self.number_of_message_passing_layers)
+        name = '_'.join([model_type,node_model,edge_model,layer_size,backbone,messages])
         return name
 
 IMPLEMENTED_MODELS = {

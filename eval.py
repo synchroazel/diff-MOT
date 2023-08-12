@@ -18,7 +18,7 @@ if __name__ == '__main__':
                         help='Path to the folder where the results will be saved.')
 
     # Not really sure of its role
-    parser.add_argument('--tracker_sub_folder', type=str, default='exp1',
+    parser.add_argument('--tracker_sub_folder', type=str, default='exp_classification',
                         help='Subfolder of tracker_path where the tracker files are located.')
 
     args = parser.parse_args()
