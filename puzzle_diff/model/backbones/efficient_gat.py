@@ -26,7 +26,7 @@ class Eff_GAT(nn.Module):
         self.output_channels = output_channels
         # visual_feats = 448  # hardcoded
 
-        self.combined_features_dim = 1088 + 32 + 32
+        self.combined_features_dim = 70  # 1088 + 32 + 32
 
         # self.gnn_backbone = torch_geometric.nn.models.GAT(
         #     in_channels=self.combined_features_dim,
@@ -81,22 +81,40 @@ class Eff_GAT(nn.Module):
         time: Tensor,
         patch_rgb: Tensor,
         edge_index: Tensor,
+        node_feats: Tensor,  # ! added
         patch_feats: Tensor,
-        batch,
+        batch,  # ! removed
+        edge_feats: Tensor,  # ! added
+        mps_fallback: bool = False,
     ):
+
         time_feats = self.time_emb(time)  # embedding, int -> 32
         pos_feats = self.pos_mlp(xy_pos)  # MLP, (x, y) -> 32
 
         # COMBINE  and transform with MLP
-        combined_feats = torch.cat([patch_feats, pos_feats, time_feats], -1)
+        combined_feats = torch.cat([
+            # patch_feats,
+            edge_feats,
+            pos_feats,
+            time_feats
+        ], -1)
         combined_feats = self.mlp(combined_feats)
+
+        if mps_fallback:
+            self.gnn_backbone.to("cpu")
+            combined_feats = combined_feats.to("cpu")
+            edge_index = edge_index.to("cpu")
 
         # GNN
         feats = self.gnn_backbone(x=combined_feats, edge_index=edge_index)
 
+        if mps_fallback:
+            feats = feats.to("mps")
+            combined_feats = combined_feats.to("mps")
+
         # Residual + final transform
         final_feats = self.final_mlp(
-            feats + combined_feats
+            feats + combined_feats  # ! changed # ---------------------------- CHECK
         )  # combined -> (err_x, err_y)
 
         return final_feats

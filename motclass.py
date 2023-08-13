@@ -79,17 +79,17 @@ def build_graph(linkage_window: int,
 
     # kNN edge pruning
     # if knn_pruning_args is not None:
-##
+    ##
     #     if mps_fallback:
     #         graph = graph.to('cpu')
-##
+    ##
     #     knn_morpher = KNNGraph(loop=False, force_undirected=True, **knn_pruning_args)
     #     graph = knn_morpher(graph)
-##
+    ##
     #     # knn graph is somehow not respecting the original edges,
     #     if mps_fallback:
     #         graph = graph.to('mps')
-#
+    #
     # directed graph
     graph.edge_index = torch.combinations(torch.tensor(range(0, number_of_nodes))).t().to(device=device)
 
@@ -150,9 +150,9 @@ def build_graph(linkage_window: int,
 
     # Compute x, y, h, w, and t attributes for each edge using tensor operations
     edge_attributes[:, 0] = (2 * (detections_coords[targets, 0] - detections_coords[sources, 0])) / ((
-            detections_coords[sources, 2] + detections_coords[targets, 2]) + EPSILON)
+                                                                                                             detections_coords[sources, 2] + detections_coords[targets, 2]) + EPSILON)
     edge_attributes[:, 1] = (2 * (detections_coords[sources, 1] - detections_coords[targets, 1])) / (
-        (detections_coords[sources, 3] + detections_coords[targets, 3]) + EPSILON)
+            (detections_coords[sources, 3] + detections_coords[targets, 3]) + EPSILON)
     edge_attributes[:, 2] = torch.log(
         (detections_coords[sources, 2] / (detections_coords[targets, 2]+ EPSILON)).abs()
     )
@@ -546,12 +546,12 @@ class MotDataset(Dataset):
         # logging.debug(f"From {starting_frame} to {ending_frame}")
         # logging.debug(f"Starting in track: {cur_track}")
         # logging.debug(f"From {starting_frame} to {ending_frame} of track {cur_track}")
-#
+        #
         # frames_window_msg = f"frames {starting_frame}-{ending_frame}/{len(all_images[cur_track])}"
-#
+        #
         # logging.info(
         #     f"Subtrack #{idx} | track {self.tracklist[cur_track]} {frames_window_msg}\r")
-#
+        #
         track = MotTrack(detections=detections,
                          images_list=images_list[starting_frame:ending_frame],
                          det_resize=self.det_resize,

@@ -14,6 +14,8 @@ from puzzle_diff.model.spatial_diffusion import *
 from utilities import get_best_device
 from torch_geometric.transforms import ToDevice
 
+from model import ImgEncoder, IMPLEMENTED_MODELS
+
 
 # %% Function definitions
 
@@ -68,16 +70,15 @@ def train(model,
                 save_model(model, mps_fallback=mps_fallback, classification=classification, epoch=epoch,
                            track_name=cur_track_name, epoch_info=epoch_info)
 
+            # -------------------------------------------------------------------------------------------------------------------- #
+
             " Training step "
 
-            # One-hot encoded y
-            # oh_y = torch.where(torch.vstack((data.y, data.y)).t().cpu() == torch.tensor([1., 1.]),
-            #                    torch.tensor([1., 0]),
-            #                    torch.tensor([0., 1.])).to(device)
-            oh_y = torch.ops.one_hot(data.y.to(torch.int64), 2)  # .to(device).float()
+            # One-hot encoded y - INVERSE!
+            oh_y = torch.nn.functional.one_hot(data.y.to(torch.int64), -1)  # .to(device).float()
 
             # Diffusion times
-            time = torch.zeros((oh_y.shape[0])).long()
+            time = torch.zeros((oh_y.shape[0])).to(device).long()
 
             # Edge attributes
             edge_attr = data.edge_attr  # .to(device)
@@ -89,8 +90,9 @@ def train(model,
                 x_start=oh_y,
                 t=time,
                 loss_type="huber",
+                node_feats=data.detections,
                 edge_index=edge_index,
-                edge_attr=edge_attr
+                edge_feats=edge_attr
             )
 
             # Backward and optimize
@@ -101,7 +103,10 @@ def train(model,
 
             pbar_dl.update(1)
 
+            # -------------------------------------------------------------------------------------------------------------------- #
+
             " Validation step "
+
             val_loss, acc_ones, acc_zeros, zeros_as_ones, ones_as_zeros = single_validate(model=model,
                                                                                           val_loader=val_loader,
                                                                                           idx=i,
@@ -163,14 +168,11 @@ def single_validate(model,
 
         gt_edges = data.y
 
-        # One-hot encoded y
-        # oh_y = torch.where(torch.vstack((data.y, data.y)).t().cpu() == torch.tensor([1., 1.]),
-        #                    torch.tensor([1., 0]),
-        #                    torch.tensor([0., 1.])).to(device)
-        oh_y = torch.ops.one_hot(data.y.to(torch.int64), 2)  # .to(device).float()
+        # One-hot encoded y - INVERSE!
+        oh_y = torch.nn.functional.one_hot(data.y.to(torch.int64), -1)  # .to(device).float()
 
         # Diffusion times
-        time = torch.zeros((oh_y.shape[0])).long()
+        time = torch.zeros((oh_y.shape[0])).to(device).long()
 
         # Edge attributes
         edge_attr = data.edge_attr  # .to(device)
@@ -178,24 +180,32 @@ def single_validate(model,
         # Edge indexes
         edge_index = data.edge_index  # .to(device)
 
-        _, pred_edges_oh = model.p_sample_loop(shape=(oh_y.shape[0], 2),
-                                               cond=edge_attr,
-                                               edge_index=edge_index)
+        # _, pred_edges_oh = model.p_sample_loop(shape=(oh_y.shape[0], 2),
+        #                                        edge_feats=edge_attr,
+        #                                        node_feats=data.detections,
+        #                                        edge_index=edge_index)
 
-        loss = model.p_losses(
+        loss, pred_edges_oh = model.p_losses(
             x_start=oh_y,
             t=time,
             loss_type="huber",
+            node_feats=data.detections,
+            edge_feats=edge_attr,
             edge_index=edge_index,
-            edge_attr=edge_attr
+            cond=None,
+            also_preds=True
         )
 
-        # IDEA 1
-        ths = 0
-        pred_edges = torch.where(pred_edges_oh < ths, torch.tensor([0., 1.]), torch.tensor([1., 0.]))
+        # ths = (pred_edges_oh[:, 1] - pred_edges_oh[:, 0]).mean()
 
-        # IDEA 2
-        # pred_edges = torch.where(pred_edges_oh[:, 0] > pred_edges_oh[:, 1], 1., 0.)
+        # ths = 0
+        # pred_edges = torch.where(pred_edges_oh[:, 1] > ths, 1., 0.)
+
+        pred_edges = torch.where(pred_edges_oh[:, 1] > pred_edges_oh[:, 0], 1., 0.)  # !
+
+        # apply a softmax to the output of the model
+        # pred_edges = torch.softmax(pred_edges_oh, dim=1)[:, 1]
+        # pred_edges = torch.round(pred_edges)
 
         zero_mask = gt_edges <= .5
         one_mask = gt_edges > .5
@@ -355,7 +365,7 @@ linkage_window = args.linkage_window
 
 # Device
 device = get_best_device()
-mps_fallback = args.apple_silicon  # Only if using MPS this should be true
+mps_fallback = True  # args.apple_silicon  # Only if using MPS this should be true
 
 # Loss function
 alpha = args.alpha
@@ -377,11 +387,31 @@ match loss_type:
     case _:
         raise NotImplemented(
             "The chosen loss: " + loss_type + " has not been implemented yet."
-            "To see the available ones, run this script with the -h option")
+                                              "To see the available ones, run this script with the -h option")
 
 # %% Initialize the model
 
-model = GNN_Diffusion().to(device)
+args.model = "timeaware"
+
+network_dict = IMPLEMENTED_MODELS[args.model]
+
+gnn = Net(backbone=backbone,
+          layer_tipe=layer_type,
+          layer_size=l_size,
+          dtype=dtype,
+          mps_fallback=mps_fallback,
+          edge_features_dim=70,
+          heads=heads,
+          concat=False,
+          dropout=args.dropout,
+          add_self_loops=False,
+          steps=messages,
+          device=device,
+          model_dict=network_dict,
+          node_features_dim=ImgEncoder.output_dims[backbone],
+          is_edge_model=not args.node_model)
+
+model = GNN_Diffusion(custom_gnn=gnn, mps_fallback=True).to(device)
 
 optimizer = Adafactor(model.parameters())
 
@@ -431,21 +461,6 @@ if classification:
     print("\tSetting: classification")
 else:
     print("\tSetting: regression")
-
-# print("\nNetwork:")
-# print("\tbackbone: " + backbone + "\n\t" +
-#       "number of heads: " + str(heads) + "\n\t" +
-#       "number of message passing steps: " + str(messages) + "\n\t" +
-#       "layer type: " + layer_type + "\n\t" +
-#       "layer size: " + str(l_size) + "\n\t" +
-#       "number of edge features: " + str(EDGE_FEATURES_DIM) + "\n\t" +
-#       "dropout: " + str(args.dropout) + "\n"
-#       )
-
-# print("Training:")
-# print("\tLoss function: " + loss_type)
-# print("\tOptimizer: " + args.optimizer)
-# print("\tLearning rate: " + str(learning_rate))
 
 # %% Train the model
 
