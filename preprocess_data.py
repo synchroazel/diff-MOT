@@ -144,7 +144,7 @@ parser = argparse.ArgumentParser(
 
 parser.add_argument('-m', '--mot', default="MOT17", type=str)
 parser.add_argument('--classification', action='store_true')
-parser.add_argument('--backbone',  default="efficientnet-b7", type=str)
+parser.add_argument('--backbone',  default="resnet50", type=str)
 
 args = parser.parse_args()
 
@@ -162,7 +162,7 @@ data_loader = MotDataset(dataset_path="/media/dmmp/vid+backup/Data/" + dataset,
                          detections_file_folder="gt",
                          detections_file_name="gt.txt",
                          dl_mode=True,
-                         knn_pruning_args={"k": 20, "cosine": False},
+                         knn_pruning_args={"k": 99, "cosine": False},
                          preprocessing=True,
                          preprocessed=False,
                          classification=classification,

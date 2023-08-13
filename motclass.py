@@ -29,7 +29,6 @@ class MOTGraph(pyg_data.Data):
 
 
 def build_graph(linkage_window: int,
-                n_nodes:list,
                 gt_dict: dict,
                 detections: torch.Tensor,
                 frame_times: torch.Tensor,
@@ -37,7 +36,7 @@ def build_graph(linkage_window: int,
                 device: torch.device,
                 dtype: torch.dtype = torch.float32,
                 mps_fallback: bool = False,
-                knn_pruning_args=None) -> pyg_data.Data:
+                mot_name:str = 'MOT17') -> pyg_data.Data:
     """
     This function's purpose is to process the output of `track.get_data()` to build an appropriate graph.
 
@@ -57,8 +56,8 @@ def build_graph(linkage_window: int,
     position_matrix = positions[:, (0, 1)]
 
     # position_matrix = detections
-
-    distance_matrix = torch.cdist(detections, detections)
+    # feature_differences = torch.cdist(detections, detections)
+    distance_matrix = torch.cdist(position_matrix, position_matrix)
 
     detections = detections.to(dtype)
     number_of_nodes = len(detections)
@@ -73,27 +72,31 @@ def build_graph(linkage_window: int,
         detections_coords=detections_coords,
         num_nodes=number_of_nodes,
         edge_attr=None,
-        pos=position_matrix,
+        # pos=feature_differences,
+        pos=distance_matrix,
         times=frame_times
     )
 
     # kNN edge pruning
-    if knn_pruning_args is not None:
+    # if knn_pruning_args is not None:
+##
+    #     if mps_fallback:
+    #         graph = graph.to('cpu')
+##
+    #     knn_morpher = KNNGraph(loop=False, force_undirected=True, **knn_pruning_args)
+    #     graph = knn_morpher(graph)
+##
+    #     # knn graph is somehow not respecting the original edges,
+    #     if mps_fallback:
+    #         graph = graph.to('mps')
+#
+    # directed graph
+    graph.edge_index = torch.combinations(torch.tensor(range(0, number_of_nodes))).t().to(device=device)
 
-        if mps_fallback:
-            graph = graph.to('cpu')
-
-        knn_morpher = KNNGraph(loop=False, force_undirected=True, **knn_pruning_args)
-        graph = knn_morpher(graph)
-
-        # knn graph is somehow not respecting the original edges,
-        if mps_fallback:
-            graph = graph.to('mps')
-
-    # remove duplicates and make graph true undirected
-    sources, targets = graph.edge_index
-    mask = sources < targets
-    graph.edge_index = graph.edge_index[:, mask]
+    # # remove duplicates and make graph true undirected
+    # sources, targets = graph.edge_index
+    # mask = sources < targets
+    # graph.edge_index = graph.edge_index[:, mask]
 
     # linkage
 
@@ -108,14 +111,33 @@ def build_graph(linkage_window: int,
     mask = (time_distances < linkage_window) & (time_distances != 0)
     graph.edge_index = graph.edge_index[:, mask]
 
-    graph.edge_index = shuffle_tensor(graph.edge_index.t()).t()
+
+
+    # naive pr
+    sources, targets = graph.edge_index
+    # time_distances = time_distances[mask]
+    space_distances = distance_matrix[sources,targets]
+
+    if mot_name == 'MOT17':
+        THRESHOLD = 100
+    elif mot_name == 'MOT20':
+        THRESHOLD = 15
+    else:
+        THRESHOLD = 50
+    mask = space_distances < THRESHOLD
+    graph.edge_index = graph.edge_index[:, mask]
+    pass
+
+    # graph.edge_index = shuffle_tensor(graph.edge_index.t()).t()
     # assert knn didn't delete gt
-    # gt_adjacency_set = set([tuple(x) for x in gt_dict['1']])
-    # # # assert no ground truth has been lost
-    # test_list = graph.edge_index.t().tolist()
-    # test = [list(a) in test_list for a in gt_adjacency_set]
-    # # assert all(a is True for a in test)
-    # del test, test_list
+    gt_adjacency_set = set([tuple(x) for x in gt_dict['1']])
+    # # assert no ground truth has been lost
+    test_list = graph.edge_index.t().tolist()
+    test = [list(a) in test_list for a in gt_adjacency_set]
+    # assert all(a is True for a in test)
+    if not all(a is True for a in test):
+        print("AAAAAAAAAAAAAAAAa")
+    del test, test_list
 
 
     # # once the graph is pruned, compute edge attributes
@@ -239,9 +261,12 @@ class MotTrack:
 
             image = Image.open(os.path.normpath(image))  # all image detections in the current frame
 
+
             for detection in self.detections[i]:
                 nodes += 1
+
                 bbox = box_convert(torch.tensor(detection['bbox']), "xywh", "xyxy").tolist()
+
 
                 detection = image.crop(bbox)
                 detection = detection.resize(self.det_resize)
@@ -332,7 +357,7 @@ class MotTrack:
 
         return {
             # "adjacency_list": adjacency_list,
-            'n_nodes':self.n_nodes,
+            # 'n_nodes':self.n_nodes,
             'linkage_window':self.linkage_window,
             "gt_dict": gt_dict,
             "detections": node_features,
@@ -355,7 +380,6 @@ class MotDataset(Dataset):
                  subtrack_len: int = 15,
                  slide: int = 10,
                  dl_mode: bool = True,
-                 black_and_white_features=False,
                  naive_pruning_args=None,
                  knn_pruning_args=None,
                  mps_fallback: bool = False,
@@ -377,7 +401,6 @@ class MotDataset(Dataset):
         self.slide = slide
         self.subtrack_len = subtrack_len
         self.mps_fallback = mps_fallback
-        self.black_and_white_features = black_and_white_features
         self.device = device
         self.dl_mode = dl_mode
         self.dtype = dtype
@@ -463,14 +486,19 @@ class MotDataset(Dataset):
         self.end_frame = self.str_frame + self.subtrack_len
 
     @staticmethod
-    def _read_detections(det_file) -> dict:
+    def _read_detections(det_file, starting_frame:int, ending_frame:int) -> dict:
         """Read detections into a dictionary"""
 
         file = np.loadtxt(det_file, delimiter=",")
 
         detections = {}
         for det in file:
+            # check for exclusion flag
+            if det[6] <= 0.5:
+                continue
             frame = int(det[0])
+            if not (frame > starting_frame and frame <= ending_frame):
+                continue
             id = int(det[1])
             bbox = det[2:6].tolist()
             if frame not in detections:
@@ -500,36 +528,32 @@ class MotDataset(Dataset):
                 tracklet_graph = pickle.load(f)
             return tracklet_graph
 
-        all_detections = []
-        for track in self.tracklist:
-            track_path = os.path.join(self.dataset_dir, self.split, track)
-            detections_file = os.path.normpath(
-                os.path.join(track_path, self.detections_file_folder, self.detections_file_name))
-            detections = self._read_detections(detections_file)
-            detections = [detections[frame] for frame in sorted(detections.keys())]
-            all_detections += [detections]
 
-        all_images = []
-        for track in self.tracklist:
-            track_path = os.path.join(self.dataset_dir, self.split, track)
-            img_dir = os.path.normpath(os.path.join(track_path, self.images_directory))
-            images_list = sorted([os.path.join(img_dir, img) for img in os.listdir(img_dir)])
-            all_images += [images_list]
+        track = self.tracklist[cur_track]
+        track_path = os.path.join(self.dataset_dir, self.split, track)
+        detections_file = os.path.normpath(
+            os.path.join(track_path, self.detections_file_folder, self.detections_file_name))
+        detections = self._read_detections(detections_file, starting_frame, ending_frame)
+        detections = [detections[frame] for frame in sorted(detections.keys())]
+
+        track_path = os.path.join(self.dataset_dir, self.split, track)
+        img_dir = os.path.normpath(os.path.join(track_path, self.images_directory))
+        images_list = sorted([os.path.join(img_dir, img) for img in os.listdir(img_dir)])
 
         if self.frames_per_track[cur_track] - starting_frame < 15:
             ending_frame = starting_frame + (self.frames_per_track[cur_track] - starting_frame)
 
-        logging.debug(f"From {starting_frame} to {ending_frame}")
-        logging.debug(f"Starting in track: {cur_track}")
-        logging.debug(f"From {starting_frame} to {ending_frame} of track {cur_track}")
-
-        frames_window_msg = f"frames {starting_frame}-{ending_frame}/{len(all_images[cur_track])}"
-
-        logging.info(
-            f"Subtrack #{idx} | track {self.tracklist[cur_track]} {frames_window_msg}\r")
-
-        track = MotTrack(detections=all_detections[cur_track][starting_frame:ending_frame],
-                         images_list=all_images[cur_track][starting_frame:ending_frame],
+        # logging.debug(f"From {starting_frame} to {ending_frame}")
+        # logging.debug(f"Starting in track: {cur_track}")
+        # logging.debug(f"From {starting_frame} to {ending_frame} of track {cur_track}")
+#
+        # frames_window_msg = f"frames {starting_frame}-{ending_frame}/{len(all_images[cur_track])}"
+#
+        # logging.info(
+        #     f"Subtrack #{idx} | track {self.tracklist[cur_track]} {frames_window_msg}\r")
+#
+        track = MotTrack(detections=detections,
+                         images_list=images_list[starting_frame:ending_frame],
                          det_resize=self.det_resize,
                          linkage_window=self.linkage_window,
                          subtrack_len=self.subtrack_len,
@@ -545,7 +569,7 @@ class MotDataset(Dataset):
                 mps_fallback=self.mps_fallback,
                 device=self.device,
                 dtype=self.dtype,
-                knn_pruning_args=self.knn_pruning_args,
+                mot_name=self.name,
                 **track.get_data())
             if self.preprocessing:
                 save_path = self._build_preprocess_path(idx)
