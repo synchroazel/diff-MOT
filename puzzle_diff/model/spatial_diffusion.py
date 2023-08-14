@@ -141,7 +141,7 @@ def sigmoid_beta_schedule(timesteps):
 
 def extract(a, t, x_shape=None):
     batch_size = t.shape[0]
-    out = a.gather(-1, t)
+    out = a.gather(-1, t.to(torch.int64))
     return out[:, None]  # out.reshape(batch_size, *((1,) * (len(x_shape) - 1)))
 
 
@@ -282,6 +282,10 @@ class GNN_Diffusion(pl.LightningModule):
 
         self.mps_fallback = mps_fallback  # ! added
 
+    # todo
+    def __str__(self):
+        return "DUMMY TODO"
+
     def initialize_torchmetrics(self, n_patches):
         metrics = {}
 
@@ -411,9 +415,9 @@ class GNN_Diffusion(pl.LightningModule):
             also_preds=False
     ):
         if noise is None:
-            noise = torch.randn_like(x_start)
+            noise = torch.randn_like(x_start.float())
 
-        x_noisy = self.q_sample(x_start=x_start, t=t, noise=noise)
+        x_noisy = self.q_sample(x_start=x_start.float(), t=t, noise=noise)
         if self.steps == 1:  # Transformer case
             x_noisy = torch.zeros_like(x_noisy)
 

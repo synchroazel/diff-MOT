@@ -35,7 +35,7 @@ def single_validate(model, val_loader, idx, loss_function, device,loss_not_initi
             loss = loss_function(pred_edges, gt_edges)
 
         zero_treshold = 0.33
-        one_treshold = 0.5
+        one_treshold = 0.6
 
         if classification:
             zero_mask = pred_edges <= one_treshold

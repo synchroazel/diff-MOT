@@ -1,5 +1,7 @@
 import argparse
+import random
 
+import numpy.random
 from torch_geometric.transforms import ToDevice
 from tqdm import tqdm
 
@@ -67,8 +69,8 @@ def train(model,
 
             # On track switch, save the model
             if cur_track_idx != last_track_idx and cur_track_idx != 1:
-                save_model(model, mps_fallback=mps_fallback, classification=classification, epoch=epoch,
-                           track_name=cur_track_name, epoch_info=epoch_info)
+                save_model(model, mps_fallback=mps_fallback, classification=classification, epoch=epoch, epoch_info=epoch_info,
+                           savepath_adds={'extra': 'diffusion'})
 
             # -------------------------------------------------------------------------------------------------------------------- #
 
@@ -78,7 +80,7 @@ def train(model,
             oh_y = torch.nn.functional.one_hot(data.y.to(torch.int64), -1)  # .to(device).float()
 
             # Diffusion times
-            time = torch.zeros((oh_y.shape[0])).to(device).long()
+            time = torch.zeros((oh_y.shape[0])).to(device).to(torch.int64)
 
             # Edge attributes
             edge_attr = data.edge_attr  # .to(device)
@@ -106,10 +108,10 @@ def train(model,
             # -------------------------------------------------------------------------------------------------------------------- #
 
             " Validation step "
-
+            id_validate = random.choice(range(0, val_loader.n_subtracks))
             val_loss, acc_ones, acc_zeros, zeros_as_ones, ones_as_zeros = single_validate(model=model,
                                                                                           val_loader=val_loader,
-                                                                                          idx=i,
+                                                                                          idx=id_validate, # todo
                                                                                           device=device)
 
             total_train_loss += train_loss.item()
@@ -171,8 +173,8 @@ def single_validate(model,
         # One-hot encoded y - INVERSE!
         oh_y = torch.nn.functional.one_hot(data.y.to(torch.int64), -1)  # .to(device).float()
 
-        # Diffusion times
-        time = torch.zeros((oh_y.shape[0])).to(device).long()
+        # Diffusion times TODO: check time use
+        time = torch.zeros((oh_y.shape[0])).to(device).to(torch.int64)
 
         # Edge attributes
         edge_attr = data.edge_attr  # .to(device)
@@ -180,21 +182,21 @@ def single_validate(model,
         # Edge indexes
         edge_index = data.edge_index  # .to(device)
 
-        # _, pred_edges_oh = model.p_sample_loop(shape=(oh_y.shape[0], 2),
-        #                                        edge_feats=edge_attr,
-        #                                        node_feats=data.detections,
-        #                                        edge_index=edge_index)
-
-        loss, pred_edges_oh = model.p_losses(
-            x_start=oh_y,
-            t=time,
-            loss_type="huber",
-            node_feats=data.detections,
-            edge_feats=edge_attr,
-            edge_index=edge_index,
-            cond=None,
-            also_preds=True
-        )
+        _, pred_edges_oh = model.p_sample_loop(shape=(oh_y.shape[0], 2),
+                                               edge_feats=edge_attr,
+                                               node_feats=data.detections,
+                                               edge_index=edge_index)
+        loss = F.smooth_l1_loss(pred_edges_oh, oh_y)
+        # loss, _ = model.p_losses(
+        #     x_start=oh_y,
+        #     t=time,
+        #     loss_type="huber",
+        #     node_feats=data.detections,
+        #     edge_feats=edge_attr,
+        #     edge_index=edge_index,
+        #     cond=None,
+        #     also_preds=True
+        # )
 
         # ths = (pred_edges_oh[:, 1] - pred_edges_oh[:, 0]).mean()
 
@@ -243,17 +245,16 @@ parser.add_argument('-N', '--message_layer_nodes', default="base",
                          "NB: all layers are time aware"
                          "Available structures:\n"
                          "- base (layer proposed on Neural Solver),\n"
-                         "- general (GeneralConv),\n"
-                         "- GAT (GATv2Conv),\n"
+                         "- attention (GATv2Conv),\n"
                          "- transformer")
-parser.add_argument('-E', '--message_layer_edges', default="base",
-                    help="Type of message passing layer for edges (EDGE MODEL)."
-                         "NB: all layers are time aware"
-                         "Available structures:\n"
-                         "- base (layer proposed on Neural Solver),\n"
-                         "- general (GeneralConv),\n"
-                         "- GAT (GATv2Conv),\n"
-                         "- transformer")
+# parser.add_argument('-E', '--message_layer_edges', default="base",
+#                     help="Type of message passing layer for edges (EDGE MODEL)."
+#                          "NB: all layers are time aware"
+#                          "Available structures:\n"
+#                          "- base (layer proposed on Neural Solver),\n"
+#                          "- general (GeneralConv),\n"
+#                          "- GAT (GATv2Conv),\n"
+#                          "- transformer")
 parser.add_argument('-B', '--backbone', default="resnet50",
                     help="Visual backbone for nodes feature extraction.")
 parser.add_argument('--float16', action='store_true',
@@ -267,9 +268,7 @@ parser.add_argument('-L', '--loss_function', default="huber",
                     help="Loss function to use."
                          "Implemented losses: huber, bce, focal, dice")
 parser.add_argument('--epochs', default=1, type=int,
-                    help="Number of epochs."
-                         "NB: one seems to be more than enough."
-                         "The model is updated every new track and one epoch takes ~12h")
+                    help="Number of epochs.")
 parser.add_argument('-n', '--layer_size', default=500, type=int,
                     help="Size of hidden layers")
 parser.add_argument('-p', '--messages', default=6, type=int,
@@ -279,12 +278,12 @@ parser.add_argument('--heads', default=6, type=int,
 parser.add_argument('--reduction', default="mean",
                     help="Reduction logic for the loss."
                          "Implemented reductions: mean, sum")
-parser.add_argument('-l', '--learning_rate', default=0.001, type=float,
-                    help="Learning rate.")
+# parser.add_argument('-l', '--learning_rate', default=0.001, type=float,
+#                     help="Learning rate.")
 parser.add_argument('--dropout', default=0.3, type=float, help="dropout")
 # TODO: put available optimizers
-parser.add_argument('--optimizer', default="AdamW",
-                    help="Optimizer to use.")
+# parser.add_argument('--optimizer', default="AdamW",
+#                     help="Optimizer to use.")
 # TODO: describe how it works
 parser.add_argument('--alpha', default=0.95, type=float,
                     help="Alpha parameter for the focal loss.")
@@ -298,27 +297,27 @@ parser.add_argument('--detection_gt_folder', default="gt",
                     help="Folder containing the ground truth detections files.")
 parser.add_argument('--detection_gt_file', default="gt.txt",
                     help="Name of the ground truth detections file.")
-parser.add_argument('--subtrack_len', default=20, type=int,
+parser.add_argument('--subtrack_len', default=15, type=int,
                     help="Length of the subtrack."
                          "NB: a value higher than 20 might require too much memory.")
 parser.add_argument('--linkage_window', default=5, type=int,
                     help="Linkage window for building the graph."
                          "(e.s. if = 5 -> detections in frame 0 will connect to detections up to frame 5)")
-parser.add_argument('--slide', default=15, type=int,
+parser.add_argument('--slide', default=10, type=int,
                     help="Sliding window to adopt during testing."
                          "NB: suggested to be subtrack_len - linkage_window")
-parser.add_argument('-k', '--knn', default=20, type=int,
-                    help="K parameter for knn reduction."
-                         "NB: a value lower than 20 may exclude ground truths. Set to 0 for no knn.")
-parser.add_argument('--cosine', action='store_true',
-                    help="Use cosine distance instead of euclidean distance. Unavailable under MPS.")
-parser.add_argument('--classification', action='store_true',
-                    help="Work in classification setting instead of regression.")
+# parser.add_argument('-k', '--knn', default=20, type=int,
+#                     help="K parameter for knn reduction."
+#                          "NB: a value lower than 20 may exclude ground truths. Set to 0 for no knn.")
+# parser.add_argument('--cosine', action='store_true',
+#                     help="Use cosine distance instead of euclidean distance. Unavailable under MPS.")
+# parser.add_argument('--classification', action='store_true',
+#                     help="Work in classification setting instead of regression.")
 
 args = parser.parse_args()
 
 # There was no preconception of what to do  -cit.
-classification = args.classification
+classification = True
 
 # %% Set up parameters
 
@@ -341,16 +340,7 @@ messages = args.messages
 l_size = args.layer_size
 epochs = args.epochs
 heads = args.heads
-learning_rate = args.learning_rate
-
-# kNN logic
-if args.knn <= 0:
-    knn_args = None
-else:
-    knn_args = {
-        'k': args.knn,
-        'cosine': args.cosine
-    }
+# learning_rate = args.learning_rate TODO
 
 # Dtype to use
 if args.float16:
@@ -365,30 +355,30 @@ linkage_window = args.linkage_window
 
 # Device
 device = get_best_device()
-mps_fallback = True  # args.apple_silicon  # Only if using MPS this should be true
+mps_fallback = args.apple_silicon # args.apple_silicon  # Only if using MPS this should be true
 
 # Loss function
-alpha = args.alpha
-delta = args.delta
-gamma = args.gamma
-reduction = args.reduction
-loss_type = args.loss_function
-match loss_type:
-    case 'huber':
-        loss_function = IMPLEMENTED_LOSSES[loss_type](delta=delta, reduction=reduction)
-        if classification:
-            raise Exception("Huber loss should not be used in a classification setting, please choose a different one")
-    case 'bce':
-        loss_function = IMPLEMENTED_LOSSES[loss_type]()
-    case 'focal':
-        loss_function = IMPLEMENTED_LOSSES[loss_type]
-    case 'berhu':
-        raise NotImplemented("BerHu loss has not been implemented yet")
-    case _:
-        raise NotImplemented(
-            "The chosen loss: " + loss_type + " has not been implemented yet."
-                                              "To see the available ones, run this script with the -h option")
-
+# alpha = args.alpha
+# delta = args.delta
+# gamma = args.gamma
+# reduction = args.reduction
+# loss_type = args.loss_function
+# match loss_type:
+#     case 'huber':
+#         loss_function = IMPLEMENTED_LOSSES[loss_type](delta=delta, reduction=reduction)
+#         if classification:
+#             raise Exception("Huber loss should not be used in a classification setting, please choose a different one")
+#     case 'bce':
+#         loss_function = IMPLEMENTED_LOSSES[loss_type]()
+#     case 'focal':
+#         loss_function = IMPLEMENTED_LOSSES[loss_type]
+#     case 'berhu':
+#         raise NotImplemented("BerHu loss has not been implemented yet")
+#     case _:
+#         raise NotImplemented(
+#             "The chosen loss: " + loss_type + " has not been implemented yet."
+#                                               "To see the available ones, run this script with the -h option")
+#
 # %% Initialize the model
 
 args.model = "timeaware"
@@ -411,7 +401,7 @@ gnn = Net(backbone=backbone,
           node_features_dim=ImgEncoder.output_dims[backbone],
           is_edge_model=not args.node_model)
 
-model = GNN_Diffusion(custom_gnn=gnn, mps_fallback=True).to(device)
+model = GNN_Diffusion(custom_gnn=gnn, mps_fallback=mps_fallback).to(device)
 
 optimizer = Adafactor(model.parameters())
 
@@ -428,11 +418,10 @@ mot_train_dl = MotDataset(dataset_path=train_dataset_path,
                           detections_file_folder=detections_file_folder,
                           detections_file_name=detections_file_name,
                           dl_mode=True,
-                          knn_pruning_args=knn_args,
                           device=device,
                           dtype=dtype,
                           mps_fallback=mps_fallback,
-                          preprocessed=False,
+                          preprocessed=True,
                           classification=classification)
 
 mot_val_dl = MotDataset(dataset_path=val_dataset_path,
@@ -442,11 +431,10 @@ mot_val_dl = MotDataset(dataset_path=val_dataset_path,
                         linkage_window=linkage_window,
                         detections_file_folder=detections_file_folder,
                         detections_file_name=detections_file_name,
-                        knn_pruning_args=knn_args,
                         dl_mode=True,
                         device=device,
                         dtype=dtype,
-                        preprocessed=False,
+                        preprocessed=True,
                         mps_fallback=mps_fallback)
 
 # Print information
@@ -455,12 +443,10 @@ print("\nDatasets:")
 print("\tDataset used for training: " + mot_train + " | validation: " + mot_val)
 print("\tSubtrack lenght: " + str(subtrack_len) + "\n\t" +
       "Linkage window: " + str(linkage_window) + "\n\t" +
-      "Slide: " + str(slide) + "\n\t" +
-      "Knn : " + str(knn_args['k']))
-if classification:
-    print("\tSetting: classification")
-else:
-    print("\tSetting: regression")
+      "Slide: " + str(slide) + "\n\t" )
+
+print("\tSetting: classification")
+
 
 # %% Train the model
 
