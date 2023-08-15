@@ -121,7 +121,7 @@ def build_graph(linkage_window: int,
     if mot_name == 'MOT17':
         THRESHOLD = 100
     elif mot_name == 'MOT20':
-        THRESHOLD = 15
+        THRESHOLD = 20
     else:
         THRESHOLD = 50
     mask = space_distances < THRESHOLD
@@ -130,14 +130,14 @@ def build_graph(linkage_window: int,
 
     # graph.edge_index = shuffle_tensor(graph.edge_index.t()).t()
     # assert knn didn't delete gt
-    gt_adjacency_set = set([tuple(x) for x in gt_dict['1']])
-    # # assert no ground truth has been lost
-    test_list = graph.edge_index.t().tolist()
-    test = [list(a) in test_list for a in gt_adjacency_set]
-    # assert all(a is True for a in test)
-    if not all(a is True for a in test):
-        print("AAAAAAAAAAAAAAAAa")
-    del test, test_list
+    # gt_adjacency_set = set([tuple(x) for x in gt_dict['1']])
+    # # # assert no ground truth has been lost
+    # test_list = graph.edge_index.t().tolist()
+    # test = [list(a) in test_list for a in gt_adjacency_set]
+    # # assert all(a is True for a in test)
+    # if not all(a is True for a in test):
+    #     print("AAAAAAAAAAAAAAAAa")
+    # del test, test_list
 
 
     # # once the graph is pruned, compute edge attributes

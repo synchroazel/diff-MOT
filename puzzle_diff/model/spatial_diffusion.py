@@ -141,7 +141,7 @@ def sigmoid_beta_schedule(timesteps):
 
 def extract(a, t, x_shape=None):
     batch_size = t.shape[0]
-    out = a.gather(-1, t)
+    out = a.gather(-1, t.to(torch.int64))
     return out[:, None]  # out.reshape(batch_size, *((1,) * (len(x_shape) - 1)))
 
 
@@ -271,8 +271,9 @@ class GNN_Diffusion(pl.LightningModule):
 
         ### BACKBONE
 
-        if custom_gnn is not None:             # !
-            self.model = custom_gnn     # ! added
+        if custom_gnn is not None:
+            self.model = custom_gnn
+            self.custom_gnn = True
         else:
             self.model = Eff_GAT(steps=steps, input_channels=2, output_channels=2)
             if self.rotation:
@@ -281,6 +282,12 @@ class GNN_Diffusion(pl.LightningModule):
         self.save_hyperparameters()
 
         self.mps_fallback = mps_fallback  # ! added
+
+    def __str__(self):
+        if self.custom_gnn:
+            return "diff_w_custom_gnn_" + self.model.__str__()
+        else:
+            return "diff_" + self.model.__str__()
 
     def initialize_torchmetrics(self, n_patches):
         metrics = {}
@@ -411,9 +418,9 @@ class GNN_Diffusion(pl.LightningModule):
             also_preds=False
     ):
         if noise is None:
-            noise = torch.randn_like(x_start)
+            noise = torch.randn_like(x_start.float())
 
-        x_noisy = self.q_sample(x_start=x_start, t=t, noise=noise)
+        x_noisy = self.q_sample(x_start=x_start.float(), t=t, noise=noise)
         if self.steps == 1:  # Transformer case
             x_noisy = torch.zeros_like(x_noisy)
 

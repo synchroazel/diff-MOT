@@ -41,6 +41,7 @@ def plot_accuracy(avg_accuracy_on_0, avg_accuracy_on_1, save_folder, exp_name, e
     plt.ylabel("Accuracy")
     plt.legend()
     plt.title("Accuracy on 0 vs Accuracy on 1", fontsize=16, loc="left")
+    plt.ylim(0,1)
     plt.tight_layout()
     save_path = os.path.normpath(
         os.path.join(
@@ -66,6 +67,7 @@ def plot_error(avg_error_on_0, avg_error_on_1, save_folder, exp_name, epoch):
     plt.ylabel("Error")
     plt.legend()
     plt.title("Error on 0 vs Error on 1", fontsize=16, loc="left")
+    plt.ylim(0, 1)
     plt.tight_layout()
     save_path = os.path.normpath(
         os.path.join(

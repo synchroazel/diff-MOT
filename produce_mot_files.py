@@ -25,12 +25,14 @@ data_loader = MotDataset(dataset_path='/media/dmmp/vid+backup/Data/MOT17',
                          detections_file_folder='gt',
                          detections_file_name='gt.txt',
                          dl_mode=True,
-                         knn_pruning_args={'k': 20, 'cosine': False},
                          device=device,
                          dtype=torch.float32,
                          classification=True)
 
-model = load_model_pkl("models_to_try/classification-node-predictor_node-model-timeaware_edge-model-base_layer-size-500_backbone-resnet50_past-mean-future-sum.pkl", device=device)  # regression
+# todo: cliargs
+outpath = "trackers/exp_diffusion/"
+# model = load_model_pkl("models_to_try/timeaware_edges_regression.pkl", device=device)  # regression
+model = load_model_pkl("models_to_try/DUMMY TODO_extra_diffusion.pkl", device=device)  # regression
 # model.mps_fallback = True
 
 #model.eval()
@@ -168,8 +170,7 @@ def build_trajectory_rec(node_idx:int, pyg_graph, nx_graph, node_dists, nodes_to
                              depth=depth)
     return new_id
 
-# todo: cliargs
-outpath = "trackers/exp_classification/"
+
 utilities.create_folders(outpath)
 
 def build_trajectories(graph, preds, ths=.33):
@@ -202,6 +203,7 @@ def build_trajectories(graph, preds, ths=.33):
 
 
 previous_track_idx = 0
+diffusion = True
 
 for _, data in tqdm(enumerate(data_loader), desc='[TQDM] Converting tracklet', total=data_loader.n_subtracks): # todo: explain track
     cur_track_idx = data_loader.cur_track
@@ -230,7 +232,41 @@ for _, data in tqdm(enumerate(data_loader), desc='[TQDM] Converting tracklet', t
 
 
     data = ToDevice(device.type)(data)
-    preds = model(data)
+    if not diffusion:
+        preds = model(data)
+    else:
+        # diffusion requires a different syntax
+        # One-hot encoded y - INVERSE!
+        oh_y = torch.nn.functional.one_hot(data.y.to(torch.int64), -1)
+
+        # Diffusion times
+        time = torch.zeros((oh_y.shape[0])).to(device).to(torch.int64)
+
+        # Edge attributes
+        edge_attr = data.edge_attr  # .to(device)
+
+        # Edge indexes
+        edge_index = data.edge_index  # .to(device)
+
+        # _, pred_edges_oh = model.p_sample_loop(shape=(oh_y.shape[0], 2),
+        #                                        edge_feats=edge_attr,
+        #                                        node_feats=data.detections,
+        #                                        edge_index=edge_index)
+
+        loss, pred_edges_oh = model.p_losses(
+            x_start=oh_y,
+            t=time,
+            loss_type="huber",
+            node_feats=data.detections,
+            edge_feats=edge_attr,
+            edge_index=edge_index,
+            cond=None,
+            also_preds=True
+        )
+
+
+
+        preds = None
     build_trajectories(data, preds=preds)
     # build_trajectories(data, data.y)
     track_frame += data_loader.slide
