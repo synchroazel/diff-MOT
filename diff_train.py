@@ -1,20 +1,13 @@
 import argparse
 
-from torch_geometric.transforms import ToDevice
-from tqdm import tqdm
-
-from model import Net
-from motclass import MotDataset
-from utilities import *
-import torch
-import pickle
-
-from motclass import MotDataset
-from puzzle_diff.model.spatial_diffusion import *
-from utilities import get_best_device
+import torch.nn.functional as F
 from torch_geometric.transforms import ToDevice
 
 from model import ImgEncoder, IMPLEMENTED_MODELS
+from motclass import MotDataset
+from puzzle_diff.model.spatial_diffusion import *
+from utilities import *
+from utilities import get_best_device
 
 
 # %% Function definitions
@@ -22,6 +15,7 @@ from model import ImgEncoder, IMPLEMENTED_MODELS
 def train(model,
           train_loader,
           val_loader,
+          loss_function,
           optimizer,
           epochs,
           device,
@@ -67,24 +61,25 @@ def train(model,
 
             # On track switch, save the model
             if cur_track_idx != last_track_idx and cur_track_idx != 1:
-                save_model(model, mps_fallback=mps_fallback, classification=classification, epoch=epoch,
-                           track_name=cur_track_name, epoch_info=epoch_info)
-
-            # -------------------------------------------------------------------------------------------------------------------- #
+                save_model(model,
+                           mps_fallback=mps_fallback,
+                           classification=classification,
+                           epoch=epoch,
+                           epoch_info=epoch_info)
 
             " Training step "
 
-            # One-hot encoded y - INVERSE!
-            oh_y = torch.nn.functional.one_hot(data.y.to(torch.int64), -1)  # .to(device).float()
+            # One-hot encoded y
+            oh_y = torch.nn.functional.one_hot(data.y.to(torch.int64), -1)
 
             # Diffusion times
             time = torch.zeros((oh_y.shape[0])).to(device).long()
 
             # Edge attributes
-            edge_attr = data.edge_attr  # .to(device)
+            edge_attr = data.edge_attr
 
             # Edge indexes
-            edge_index = data.edge_index  # .to(device)
+            edge_index = data.edge_index
 
             train_loss = model.p_losses(
                 x_start=oh_y,
@@ -103,12 +98,11 @@ def train(model,
 
             pbar_dl.update(1)
 
-            # -------------------------------------------------------------------------------------------------------------------- #
-
             " Validation step "
 
             val_loss, acc_ones, acc_zeros, zeros_as_ones, ones_as_zeros = single_validate(model=model,
                                                                                           val_loader=val_loader,
+                                                                                          loss_function=loss_function,
                                                                                           idx=i,
                                                                                           device=device)
 
@@ -154,6 +148,7 @@ def train(model,
 
 def single_validate(model,
                     val_loader,
+                    loss_function,
                     idx,
                     device):
     """
@@ -169,39 +164,22 @@ def single_validate(model,
         gt_edges = data.y
 
         # One-hot encoded y - INVERSE!
-        oh_y = torch.nn.functional.one_hot(data.y.to(torch.int64), -1)  # .to(device).float()
-
-        # Diffusion times
-        time = torch.zeros((oh_y.shape[0])).to(device).long()
+        oh_y = torch.nn.functional.one_hot(data.y.to(torch.int64), -1)
 
         # Edge attributes
-        edge_attr = data.edge_attr  # .to(device)
+        edge_attr = data.edge_attr
 
         # Edge indexes
-        edge_index = data.edge_index  # .to(device)
+        edge_index = data.edge_index
 
-        # _, pred_edges_oh = model.p_sample_loop(shape=(oh_y.shape[0], 2),
-        #                                        edge_feats=edge_attr,
-        #                                        node_feats=data.detections,
-        #                                        edge_index=edge_index)
+        _, pred_edges_oh = model.p_sample_loop(shape=(oh_y.shape[0], 2),
+                                               edge_feats=edge_attr,
+                                               node_feats=data.detections,
+                                               edge_index=edge_index)
 
-        loss, pred_edges_oh = model.p_losses(
-            x_start=oh_y,
-            t=time,
-            loss_type="huber",
-            node_feats=data.detections,
-            edge_feats=edge_attr,
-            edge_index=edge_index,
-            cond=None,
-            also_preds=True
-        )
+        pred_edges = torch.where(pred_edges_oh[:, 1] > pred_edges_oh[:, 0], 1., 0.)
 
-        # ths = (pred_edges_oh[:, 1] - pred_edges_oh[:, 0]).mean()
-
-        # ths = 0
-        # pred_edges = torch.where(pred_edges_oh[:, 1] > ths, 1., 0.)
-
-        pred_edges = torch.where(pred_edges_oh[:, 1] > pred_edges_oh[:, 0], 1., 0.)  # !
+        loss = loss_function(oh_y, pred_edges)
 
         # apply a softmax to the output of the model
         # pred_edges = torch.softmax(pred_edges_oh, dim=1)[:, 1]
@@ -222,8 +200,8 @@ def single_validate(model,
 
 parser = argparse.ArgumentParser(
     prog='python train.py',
-    description='Script for training a graph network on the MOT task',
-    epilog='Es: python train.py',
+    description='Script for training a graph network on the MOT task, integrating Diffusion.',
+    epilog='Es: python diff_train.py',
     formatter_class=argparse.RawTextHelpFormatter)
 
 # TODO: remove the default option before deployment
@@ -265,7 +243,7 @@ parser.add_argument('-Z', '--node_model', action='store_true',
                     help="Use the node model instead of the edge model.")
 parser.add_argument('-L', '--loss_function', default="huber",
                     help="Loss function to use."
-                         "Implemented losses: huber, bce, focal, dice")
+                         "Implemented losses: huber, l1, l2")
 parser.add_argument('--epochs', default=1, type=int,
                     help="Number of epochs."
                          "NB: one seems to be more than enough."
@@ -281,19 +259,9 @@ parser.add_argument('--reduction', default="mean",
                          "Implemented reductions: mean, sum")
 parser.add_argument('-l', '--learning_rate', default=0.001, type=float,
                     help="Learning rate.")
+parser.add_argument('-b', '--diff-steps', default=600, type=int,
+                    help="Number of steps of the Diffusion process.")
 parser.add_argument('--dropout', default=0.3, type=float, help="dropout")
-# TODO: put available optimizers
-parser.add_argument('--optimizer', default="AdamW",
-                    help="Optimizer to use.")
-# TODO: describe how it works
-parser.add_argument('--alpha', default=0.95, type=float,
-                    help="Alpha parameter for the focal loss.")
-# TODO: describe how it works
-parser.add_argument('--gamma', default=2., type=float,
-                    help="Gamma parameter for the focal loss.")
-# TODO: describe how it works
-parser.add_argument('--delta', default=.4, type=float,
-                    help="Delta parameter for the huber loss.")
 parser.add_argument('--detection_gt_folder', default="gt",
                     help="Folder containing the ground truth detections files.")
 parser.add_argument('--detection_gt_file', default="gt.txt",
@@ -317,8 +285,7 @@ parser.add_argument('--classification', action='store_true',
 
 args = parser.parse_args()
 
-# There was no preconception of what to do  -cit.
-classification = args.classification
+classification = True  # in the Diffusion scenario should always be True
 
 # %% Set up parameters
 
@@ -367,23 +334,18 @@ linkage_window = args.linkage_window
 device = get_best_device()
 mps_fallback = True  # args.apple_silicon  # Only if using MPS this should be true
 
+# Diffusion steps
+diffusion_steps = args.diff_steps
+
 # Loss function
-alpha = args.alpha
-delta = args.delta
-gamma = args.gamma
-reduction = args.reduction
 loss_type = args.loss_function
 match loss_type:
     case 'huber':
-        loss_function = IMPLEMENTED_LOSSES[loss_type](delta=delta, reduction=reduction)
-        if classification:
-            raise Exception("Huber loss should not be used in a classification setting, please choose a different one")
-    case 'bce':
-        loss_function = IMPLEMENTED_LOSSES[loss_type]()
-    case 'focal':
-        loss_function = IMPLEMENTED_LOSSES[loss_type]
-    case 'berhu':
-        raise NotImplemented("BerHu loss has not been implemented yet")
+        loss_function = F.smooth_l1_loss
+    case 'l1':
+        loss_function = F.l1_loss
+    case 'l2':
+        loss_function = F.mse_loss
     case _:
         raise NotImplemented(
             "The chosen loss: " + loss_type + " has not been implemented yet."
@@ -411,9 +373,11 @@ gnn = Net(backbone=backbone,
           node_features_dim=ImgEncoder.output_dims[backbone],
           is_edge_model=not args.node_model)
 
-model = GNN_Diffusion(custom_gnn=gnn, mps_fallback=True).to(device)
+model = GNN_Diffusion(custom_gnn=gnn,
+                      steps=diffusion_steps,
+                      mps_fallback=True).to(device)
 
-optimizer = Adafactor(model.parameters())
+optimizer = Adafactor(model.parameters(), lr=learning_rate, relative_step=False)
 
 # %% Set up the dataloader
 
@@ -431,8 +395,8 @@ mot_train_dl = MotDataset(dataset_path=train_dataset_path,
                           knn_pruning_args=knn_args,
                           device=device,
                           dtype=dtype,
+                          preprocessed=True,  # !
                           mps_fallback=mps_fallback,
-                          preprocessed=False,
                           classification=classification)
 
 mot_val_dl = MotDataset(dataset_path=val_dataset_path,
@@ -446,22 +410,29 @@ mot_val_dl = MotDataset(dataset_path=val_dataset_path,
                         dl_mode=True,
                         device=device,
                         dtype=dtype,
-                        preprocessed=False,
+                        preprocessed=False,  # !
                         mps_fallback=mps_fallback)
 
 # Print information
-print("[INFO] hyper parameters:")
-print("\nDatasets:")
-print("\tDataset used for training: " + mot_train + " | validation: " + mot_val)
-print("\tSubtrack lenght: " + str(subtrack_len) + "\n\t" +
-      "Linkage window: " + str(linkage_window) + "\n\t" +
-      "Slide: " + str(slide) + "\n\t" +
-      "Knn : " + str(knn_args['k']))
-if classification:
-    print("\tSetting: classification")
-else:
-    print("\tSetting: regression")
+print("[INFO] Hyperparameters and info:")
+print("\n- Datasets:")
+print("\t- Dataset used for training: " + mot_train + " | validation: " + mot_val)
+print("\t- Subtrack length: " + str(subtrack_len))
+print("\t- Linkage window: " + str(linkage_window))
+print("\t- Sliding window: " + str(slide))
+print("\t- kNN pruning: " + str(knn_args))
+print("\t- Setting: classification") if classification else print("\t- Setting: regression")
+print("\n- GNN backbone:")
+print("\t- Backbone: " + backbone)
+print("\t- Layer type: " + layer_type)
+print("\t- Layer size: " + str(l_size))
+print("\t- Heads: " + str(heads))
+print("\t- Messages: " + str(messages))
+print("\t- Dropout: " + str(args.dropout))
+print("\t- Loss function: " + loss_type)
+print("\n- Using Diffusion with " + str(diffusion_steps) + " steps")
+print("")
 
 # %% Train the model
 
-train(model, mot_train_dl, mot_val_dl, optimizer, epochs, device, mps_fallback)
+train(model, mot_train_dl, mot_val_dl, loss_function, optimizer, epochs, device, mps_fallback)
