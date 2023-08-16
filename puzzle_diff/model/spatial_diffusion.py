@@ -271,8 +271,9 @@ class GNN_Diffusion(pl.LightningModule):
 
         ### BACKBONE
 
-        if custom_gnn is not None:             # !
-            self.model = custom_gnn     # ! added
+        if custom_gnn is not None:
+            self.model = custom_gnn
+            self.custom_gnn = True
         else:
             self.model = Eff_GAT(steps=steps, input_channels=2, output_channels=2)
             if self.rotation:
@@ -282,9 +283,11 @@ class GNN_Diffusion(pl.LightningModule):
 
         self.mps_fallback = mps_fallback  # ! added
 
-    # todo
     def __str__(self):
-        return "DUMMY TODO"
+        if self.custom_gnn:
+            return "diff_w_custom_gnn_" + self.model.__str__()
+        else:
+            return "diff_" + self.model.__str__()
 
     def initialize_torchmetrics(self, n_patches):
         metrics = {}

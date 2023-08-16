@@ -135,3 +135,6 @@ class Eff_GAT(nn.Module):
         # patch_rgb.shape[0], -1
         # )
         return patch_feats
+
+    def __str__(self):
+        return "default_Eff_GAT"
