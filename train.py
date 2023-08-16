@@ -220,7 +220,7 @@ parser.add_argument('-p', '--messages', default=6, type=int, help="""Number of m
 parser.add_argument('--heads', default=6, type=int, help="""Number of heads, when applicable""")
 parser.add_argument('--loss_reduction', default="mean", help="""Reduction logic for the loss
 Implemented reductions: mean, sum""")
-parser.add_argument('--model', default="transformer", help="""Model to train
+parser.add_argument('--model', default="timeaware", help="""Model to train
 Implemented models: \n\ttimeaware, transformer, attention""")
 parser.add_argument('--past_aggregation', default="mean", help="""Aggregation logic (past) for time aware
 Implemented reductions: 'sum', 'add', 'mul', 'mean, 'min', 'max', 'std', 'logsumexp', 'softmax', 'log_softmax'""")
@@ -258,6 +258,7 @@ args = parser.parse_args()
 # args.classification = True
 # args.loss_function = "focal"
 # args.model = 'transformer'
+args.backbone = 'vgg16'
 # -------------------------------------------------------------------------------------------------------------------
 
 
@@ -351,7 +352,8 @@ mot_train_dl = MotDataset(dataset_path=train_dataset_path,
                           device=device,
                           dtype=dtype,
                           mps_fallback=mps_fallback,
-                          classification=classification)
+                          classification=classification,
+                          feature_extraction_backbone=backbone)
 
 mot_val_dl = MotDataset(dataset_path=val_dataset_path,
                         split='train',
@@ -365,7 +367,8 @@ mot_val_dl = MotDataset(dataset_path=val_dataset_path,
                         device=device,
                         dtype=dtype,
                         mps_fallback=mps_fallback,
-                        classification=classification)
+                        classification=classification,
+                        feature_extraction_backbone=backbone)
 
 network_dict = IMPLEMENTED_MODELS[args.model]
 

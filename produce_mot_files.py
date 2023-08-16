@@ -17,7 +17,15 @@ from collections import OrderedDict
 
 device = get_best_device()
 
-data_loader = MotDataset(dataset_path='/media/dmmp/vid+backup/Data/MOT17',
+
+
+# todo: cliargs
+outpath = "trackers/exp_timeaware_nodes_classification_20/"
+model = load_model_pkl("models_to_try/timeaware_node_resnet50_classification.pkl", device=device)  # regression
+classification = True
+
+
+data_loader = MotDataset(dataset_path='/media/dmmp/vid+backup/Data/MOT20',
                          split='train',
                          subtrack_len=15,
                          slide=10,
@@ -25,15 +33,9 @@ data_loader = MotDataset(dataset_path='/media/dmmp/vid+backup/Data/MOT17',
                          detections_file_folder='gt',
                          detections_file_name='gt.txt',
                          dl_mode=True,
-                         knn_pruning_args={'k': 20, 'cosine': False},
                          device=device,
                          dtype=torch.float32,
-                         classification=False)
-
-# todo: cliargs
-outpath = "trackers/exp_timeaware_edges_regression_17/"
-model = load_model_pkl("models_to_try/timeaware_edges_regression.pkl", device=device)  # regression
-# model.mps_fallback = True
+                         classification=classification)
 
 #model.eval()
 
@@ -104,7 +106,6 @@ def build_trajectory_rec(node_idx:int, pyg_graph, nx_graph, node_dists, nodes_to
         return new_id  # True
 
     # Find best edge to keep
-    # TODO: find best peso
     best_edge_idx = torch.tensor([nx_graph[n1][n2]['edge_weights'] for n1, n2 in all_out_edges]).argmax()
     best_edge = list(all_out_edges)[best_edge_idx]
 
@@ -173,10 +174,13 @@ def build_trajectory_rec(node_idx:int, pyg_graph, nx_graph, node_dists, nodes_to
 
 utilities.create_folders(outpath)
 
-def build_trajectories(graph, preds, ths=.33):
+def build_trajectories(graph, preds, ths=.33, classification=False):
     global nodes_dict
     global id
     pyg_graph = graph.clone().detach()
+
+    if classification:
+        preds = torch.sigmoid(preds)
 
     mask = torch.where(preds > float(ths), True, False)
 
@@ -232,11 +236,13 @@ for _, data in tqdm(enumerate(data_loader), desc='[TQDM] Converting tracklet', t
 
     data = ToDevice(device.type)(data)
     preds = model(data)
-    build_trajectories(data, preds=preds)
+    build_trajectories(data, preds=preds, classification=classification)
     # build_trajectories(data, data.y)
     track_frame += data_loader.slide
 
-
+cur_track_name = data_loader.tracklist[cur_track_idx]
+final_df.sort_values(by=['id', 'frame']).drop_duplicates().to_csv(outpath + cur_track_name + ".txt", index=False,
+                                                                  header=False)
 
 # todo: fix data loading
 

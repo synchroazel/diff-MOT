@@ -11,12 +11,9 @@ from utilities import *
 
 
 # %% Function definitions
-def test(model, val_loader, loss_function, output_file_folder="outcomes", device="cuda", loss_not_initialized=True, alpha=.95,
+def test(model, val_loader, loss_function, device="cuda", loss_not_initialized=True, alpha=.95,
      gamma=2, reduction='mean', one_threshold=0.5, zero_threshold = 0.33):
 
-    # TODO
-    def trajectories_to_csv():
-        pass
 
     # focal loss is implemented differently from the others
     if loss_not_initialized:
@@ -78,20 +75,20 @@ parser = argparse.ArgumentParser(
 
 parser.add_argument('-D', '--datapath', default="/media/dmmp/vid+backup/Data", type=str,help="""Dataset path
 NB: This project assumes a MOT dataset, this project has been tested with MOT17 and MOT20""") # TODO: remove the default option before deployment
-parser.add_argument('--model_savepath', default="saves/models", help="""Folder where models are loaded""")
+parser.add_argument('--model_savepath', default="models_to_try", help="""Folder where models are loaded""")
 parser.add_argument('--output_savepath', default="saves/outputs", help="""Folder where outputs are saved""")
-parser.add_argument('-m', '--model', default="timeaware_500_resnet50-backbone.pkl.bak", help="""Name of the network
+parser.add_argument('-m', '--model', default="timeaware_node_resnet50_classification.pkl", help="""Name of the network
 NB: the model must be stored in the specified save folder""")
-parser.add_argument('-M', '--MOT', default="MOT20", help="""MOT dataset of reference.""")
+parser.add_argument('-M', '--MOT', default="MOT17", help="""MOT dataset of reference.""")
 parser.add_argument('-T', '--split', default="train", help="""MOT dataset split""")
 parser.add_argument('--float16', action='store_true', help="""Whether to use half floats or not""")
 parser.add_argument('--apple', action='store_true', help="""Whether an apple device is in use with mps
 (required for some fallbacks)""")
-parser.add_argument('-L', '--loss_function', default="huber", help="""Loss function to use.
+parser.add_argument('-L', '--loss_function', default="focal", help="""Loss function to use.
 Implemented losses: huber, bce, focal, dice""")
 parser.add_argument('--reduction', default="mean", help="""Reduction logic for the loss
 Implemented reductions: mean, sum""")
-parser.add_argument('-a', '--alpha', default=0.95,type=float, help="""Alpha parameter for the focal loss
+parser.add_argument('-a', '--alpha', default=0.25,type=float, help="""Alpha parameter for the focal loss
 TODO: describe how it works""")  # TODO
 parser.add_argument('-g', '--gamma', default=2.,type=float, help="""Gamma parameter for the focal loss
 TODO: describe how it works""")  # TODO
@@ -102,7 +99,7 @@ TODO: describe how it works""")  # TODO
 parser.add_argument('--zero_threshold', default=.33,type=float, help="""Threshold to transform a weight to 0
 TODO: describe how it works""")  # TODO
 parser.add_argument('--detection_gt_folder', default="gt", help="""detection ground truth folder""")
-parser.add_argument('--detection_gt_file', default="MOT17-02-DPM.txt", help="""detection ground truth folder""")
+parser.add_argument('--detection_gt_file', default="gt.txt", help="""detection ground truth folder""")
 parser.add_argument('--subtrack_len', default=15, type=int, help="""Length of the subtrack
 NB: a value higher than 20 might require too much memory""")
 parser.add_argument('--linkage_window', default=5, type=int, help="""Linkage window for building the graph
@@ -161,8 +158,7 @@ match loss_type:
     case 'bce':
         loss_function = IMPLEMENTED_LOSSES[loss_type]()
     case 'focal':
-        loss_function = IMPLEMENTED_LOSSES[loss_type]
-        loss_not_initialized = True
+        loss_function = IMPLEMENTED_LOSSES[loss_type](alpha=alpha, gamma=gamma)
     case 'berhu':
         raise NotImplemented("BerHu loss has not been implemented yet")
     case _:
@@ -200,10 +196,8 @@ mot_train_dl = MotDataset(dataset_path=dataset_path,
                           linkage_window=linkage_window,
                           detections_file_folder=detections_file_folder,
                           detections_file_name=detections_file_name,
-                          dl_mode=True,
                           device=device,
                           mps_fallback=mps_fallback,
-                          knn_pruning_args=knn_args,
                           dtype=dtype,
                           classification=classification)
 
