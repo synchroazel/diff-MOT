@@ -204,7 +204,7 @@ NB: This project assumes a MOT dataset, this project has been tested with MOT17 
 parser.add_argument('--model_savepath', default="saves/models", help="""Folder where models are loaded""")
 parser.add_argument('--output_savepath', default="saves/outputs", help="""Folder where outputs are saved""")
 parser.add_argument('-m', '--MOTtrain', default="MOT17", help="""MOT dataset on which the network is trained""")
-parser.add_argument('-M', '--MOTvalidation', default="MOT17",
+parser.add_argument('-M', '--MOTvalidation', default="MOT20",
                     help="""MOT dataset on which the single validate is calculated""")
 parser.add_argument('-B', '--backbone', default="resnet50", help="""Visual backbone for nodes feature extraction""")
 parser.add_argument('--float16', action='store_true', help="""Whether to use half floats or not""")
@@ -384,7 +384,9 @@ model = Net(backbone=backbone,
             device=device,
             model_dict=network_dict,
             node_features_dim=ImgEncoder.output_dims[backbone],
-            is_edge_model=not args.node_model)
+            is_edge_model=not args.node_model,
+            model_type=args.model
+            )
 
 # %% Initialize the model
 
