@@ -12,10 +12,11 @@ from torch.nn import HuberLoss, BCEWithLogitsLoss, MSELoss, L1Loss
 from torch_geometric.utils import to_networkx
 from torchvision.ops import sigmoid_focal_loss
 import torch.nn.functional as F
+
+
 def create_folders(path):
     if not os.path.exists(path):
         os.makedirs(path)
-
 
 
 def get_best_device():
@@ -87,9 +88,9 @@ def save_model(model: torch.nn.Module,
                savepath: str = "saves/models",
                mode: str = "pkl",
                mps_fallback: bool = False,
-               classification:bool=False,
-               epoch:int=0,
-               epoch_info:dict = None,
+               classification: bool = False,
+               epoch: int = 0,
+               epoch_info: dict = None,
                node_model_name='timeaware',
                edge_model_name='base'):
     if mps_fallback:
@@ -98,7 +99,7 @@ def save_model(model: torch.nn.Module,
     # path components
     technique = "classification" if classification else "regression"
     epoch = "Epoch_" + str(epoch)
-    model_name = node_model_name+"_"+edge_model_name
+    model_name = node_model_name + "_" + edge_model_name
 
     savepath = os.path.normpath(
         os.path.join(
@@ -133,7 +134,6 @@ def save_model(model: torch.nn.Module,
                 with open(json_savepath, 'w+') as f:
                     f.write(js)
 
-
         case "weights":
             pass  # TODO implement
 
@@ -145,7 +145,7 @@ def save_model(model: torch.nn.Module,
 
 
 def load_model_pkl(pkl_path, device='cpu'):
-    class CustomUnpickler(pickle.Unpickler): # this is necessary to deal with MPS
+    class CustomUnpickler(pickle.Unpickler):  # this is necessary to deal with MPS
         def find_class(self, module, name):
             if module == 'torch.storage' and name == '_load_from_bytes':
                 return lambda b: torch.load(io.BytesIO(b), map_location=device)
@@ -160,9 +160,10 @@ def load_model_pkl(pkl_path, device='cpu'):
 
 class SigmoidFocalLoss(nn.Module):
     "Non weighted version of Focal Loss"
+
     def __init__(self, alpha=.25, gamma=2):
         super(SigmoidFocalLoss, self).__init__()
-        self.alpha = torch.tensor([alpha, 1-alpha]).cuda()
+        self.alpha = torch.tensor([alpha, 1 - alpha]).cuda()
         self.gamma = gamma
 
     def forward(self, inputs, targets):
@@ -170,13 +171,15 @@ class SigmoidFocalLoss(nn.Module):
         targets = targets.type(torch.long)
         at = self.alpha.gather(0, targets.data.view(-1))
         pt = torch.exp(-BCE_loss)
-        F_loss = at*(1-pt)**self.gamma * BCE_loss
+        F_loss = at * (1 - pt) ** self.gamma * BCE_loss
         return F_loss.mean()
+
 
 def shuffle_tensor(tensor):
     idx = torch.randperm(tensor.shape[0])
     t = tensor[idx].view(tensor.size())
     return t
+
 
 # TODO: add more?
 AVAILABLE_OPTIMIZERS = {
@@ -196,12 +199,17 @@ IMPLEMENTED_LOSSES = {
     'huber': HuberLoss,
     'bce': BCEWithLogitsLoss,
     'focal': SigmoidFocalLoss,
-    'mae':L1Loss,
-    'mse':MSELoss,
-    'berhu':None,
+    'mae': L1Loss,
+    'mse': MSELoss,
+    'berhu': None,
 }
+
+# %% Config stuff
 
 EDGE_FEATURES_DIM = 6
 LINKAGE_TYPE_ALL = -1
 LINKAGE_TYPE_ADJACENT = 0
-EPSILON = 0.0001 # used to avoid infinity
+EPSILON = 0.0001  # Used to avoid infinity
+
+MOT20_VALIDATION_TRACKS = ['MOT20-01']
+MOT17_VALIDATION_TRACKS = ['MOT17-02-SDP', 'MOT17-04-FRCNN', 'MOT17-05-SDP', 'MOT17-09-FRCNN']

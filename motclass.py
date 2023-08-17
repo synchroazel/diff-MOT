@@ -419,9 +419,9 @@ class MotDataset(Dataset):
         self.backbone = feature_extraction_backbone
 
         if self.preprocessing:
-            print("[INFO] Data loader set in preprocessing mode")
+            print(f"[INFO] Data loader for {self.dataset_dir} set in preprocessing mode")
         if self.preprocessed:
-            print("[INFO] Data loader set in preprocessed mode")
+            print(f"[INFO] Data loader for {self.dataset_dir} set in preprocessed mode")
         if self.preprocessing and self.preprocessed:
             raise Exception("Data loader cannot be in both preprocessing and preprocessed mode")
 
