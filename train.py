@@ -71,6 +71,7 @@ def train(model, train_loader, val_loader, loss_function, optimizer, epochs, dev
           loss_not_initialized=True, alpha=.95,
           gamma=2, reduction='mean', classification=False
           ) -> (float, float):
+    global mot_train
     model = model.to(device)
     model.train()
 
@@ -187,7 +188,7 @@ def train(model, train_loader, val_loader, loss_function, optimizer, epochs, dev
         pbar_ep.set_description(f'[TQDM] Epoch #{epoch + 1} - avg.Loss: {(total_train_loss / (i + 1)):.4f}')
         save_model(model, mps_fallback=mps_fallback, classification=classification, epoch=epoch, epoch_info=epoch_info,
                    node_model_name=model.model_dict['node_name'],
-                   edge_model_name=model.model_dict['edge_name'])
+                   edge_model_name=model.model_dict['edge_name'], savepath_adds={'trained_on_':mot_train})
     return average_train_loss, average_val_loss
 
 
@@ -258,7 +259,7 @@ args = parser.parse_args()
 # args.classification = True
 # args.loss_function = "focal"
 # args.model = 'transformer'
-args.backbone = 'vgg16'
+# args.backbone = 'vgg16'
 # -------------------------------------------------------------------------------------------------------------------
 
 
