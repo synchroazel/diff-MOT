@@ -211,7 +211,9 @@ class MotTrack:
         self.dtype = dtype
         self.logging_lv = logging_lv
         self.classification = classification
+        self._backbone_str = backbone
         self.backbone = ImgEncoder(model_name=backbone, dtype=dtype).to(device=device)
+
 
         logging.info(f"{self.n_frames} frames")
 
@@ -246,6 +248,8 @@ class MotTrack:
         channels = 3
 
         number_of_detections = sum([len(x) for x in self.detections])
+
+        self.det_resize = self.det_resize if self.backbone.image_size[self._backbone_str] is None else self.backbone.image_size[self._backbone_str]
 
         track_detections_coords = torch.zeros((number_of_detections, 4), dtype=self.dtype).to(self.device)
         frame_times = torch.zeros((number_of_detections, 1), dtype=torch.int16).to(self.device)
@@ -380,8 +384,6 @@ class MotDataset(Dataset):
                  subtrack_len: int = 15,
                  slide: int = 10,
                  dl_mode: bool = True,
-                 naive_pruning_args=None,
-                 knn_pruning_args=None,
                  mps_fallback: bool = False,
                  device: torch.device = torch.device("cuda"),
                  dtype=torch.float32,
@@ -425,13 +427,6 @@ class MotDataset(Dataset):
         if self.preprocessing and self.preprocessed:
             raise Exception("Data loader cannot be in both preprocessing and preprocessed mode")
 
-        # Initialization for pruning arguments
-        if naive_pruning_args is None:
-            self.naive_pruning_args = None  # {"dist": 20}
-        if knn_pruning_args is None:
-            self.knn_pruning_args = {"k": 10, "cosine": False}
-        else:
-            self.knn_pruning_args = knn_pruning_args
 
         # Get tracklist from the split specified
         assert split in os.listdir(self.dataset_dir), \
@@ -580,3 +575,4 @@ class MotDataset(Dataset):
                 return graph
         else:
             return track
+

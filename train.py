@@ -16,70 +16,10 @@ warnings.filterwarnings("ignore")  # Nice TQDMs >>>>>> blissful ignorance
 torch.autograd.set_detect_anomaly(True)
 
 
-# DEPRECATED
-def single_validate(model,
-                    val_loader,
-                    idx,
-                    loss_function,
-                    device,
-                    loss_not_initialized=False,
-                    classification=False,
-                    **loss_arguments):
-    """
-     Validate the model on a single subtrack, given a MOT dl and an index.
-    """
-
-    model.eval()
-
-    data = val_loader[idx]
-
-    with torch.no_grad():
-        data = ToDevice(device.type)(data)
-        pred_edges = model(data)  # Get the predicted edge labels
-        gt_edges = data.y  # Get the true edge labels
-
-        if loss_not_initialized:
-            loss = loss_function(pred_edges, gt_edges, **loss_arguments)
-        else:
-            loss = loss_function(pred_edges, gt_edges)
-
-        zero_treshold = 0.33
-        one_treshold = 0.6
-
-        if classification:
-            zero_mask = pred_edges <= one_treshold
-            one_mask = pred_edges > one_treshold
-        else:
-            zero_mask = pred_edges < zero_treshold
-            one_mask = pred_edges > one_treshold
-
-        pred_edges = torch.where(one_mask, 1., pred_edges)
-        pred_edges = torch.where(zero_mask, 0., pred_edges)
-
-        if classification:
-            zero_mask = gt_edges <= one_treshold
-            one_mask = gt_edges > one_treshold
-        else:
-            zero_mask = gt_edges < zero_treshold
-            one_mask = gt_edges > one_treshold
-
-        acc_ones = torch.where(pred_edges[one_mask] == 1., 1., 0.).mean()
-        acc_zeros = torch.where(pred_edges[zero_mask] == 0., 1., 0.).mean()
-        ones_as_zeros = torch.where(pred_edges[one_mask] == 0., 1., 0.).mean()
-        zeros_as_ones = torch.where(pred_edges[zero_mask] == 1., 1., 0.).mean()
-
-        if any([loss.isnan().item(), acc_ones.isnan().item(), acc_zeros.isnan().item(), zeros_as_ones.isnan().item(),
-                ones_as_zeros.isnan().item()]):
-            raise Exception("NaNi?!!")
-
-        return loss.item(), acc_ones.item(), acc_zeros.item(), zeros_as_ones.item(), ones_as_zeros.item()
-
-
 def validation(model,
                val_loader,
                loss_function,
                device,
-               loss_not_initialized,
                alpha,
                gamma,
                reduction):
@@ -87,7 +27,7 @@ def validation(model,
     Wrapper around test function, used for validation.
     Will skip the tracks which are not chosen for validation.
     """
-    return test(**locals(), validation_mode=True)
+    return test( validation_mode=True, **locals())
 
 
 def train(model,
@@ -98,7 +38,6 @@ def train(model,
           epochs,
           device,
           mps_fallback=False,
-          loss_not_initialized=True,
           alpha=.95,
           gamma=2,
           reduction='mean',
@@ -107,6 +46,7 @@ def train(model,
     Main training logic for the GNN model.
     Will train on all training tracks, and validate on all validation partition at the end of each track.
     """
+    global mot_train
 
     model = model.to(device)
     model.train()
@@ -135,78 +75,21 @@ def train(model,
 
         last_track_idx = 0
 
-        already_validated = True  # Even if the first track is a validation track, avoid starting validation right off
-
         avg_train_loss_msg, avg_val_loss_msg, val_accs_msg = "", "", ""  # Useful to initialize for a nicer TQDM
 
-        for i, data in pbar_dl:
+        j = 0
+
+        for _, data in pbar_dl:
             data = ToDevice(device.type)(data)
 
             cur_track_idx = train_loader.cur_track + 1
             cur_track_name = train_loader.tracklist[train_loader.cur_track]
 
-            # IF NEW TRACK
-            if last_track_idx != cur_track_idx:
-
+            # IF VALIDATION TRACK THEN IGNORE
+            if (cur_track_name in MOT17_VALIDATION_TRACKS) or (cur_track_name in MOT20_VALIDATION_TRACKS):
                 pbar_dl.set_description(
                     f'[TQDM] Skipping track {cur_track_idx}/{len(train_loader.tracklist)} ({cur_track_name})')
-
-                # IF VALIDATION TRACK THEN IGNORE
-                if cur_track_name in MOT17_VALIDATION_TRACKS + MOT20_VALIDATION_TRACKS:
-
-                    if already_validated:
-                        continue
-
-                    # IF TRAINING TRACK, AND STILL DIDN'T VALIDATE AFTER TRACK SWITCH, THEN VALIDATE
-                    val_loss, acc_ones, acc_zeros, zeros_as_ones, ones_as_zeros = validation(model,
-                                                                                             val_loader,
-                                                                                             loss_function,
-                                                                                             device,
-                                                                                             loss_not_initialized,
-                                                                                             alpha,
-                                                                                             gamma,
-                                                                                             reduction)
-
-                    total_val_loss += val_loss
-                    total_0acc += acc_zeros
-                    total_0err += zeros_as_ones
-                    total_1acc += acc_ones
-                    total_1err += ones_as_zeros
-
-                    average_val_loss = total_val_loss / (i + 1)
-                    average_0acc = total_0acc / (i + 1)
-                    average_0err = total_0err / (i + 1)
-                    average_1acc = total_1acc / (i + 1)
-                    average_1err = total_1err / (i + 1)
-
-                    epoch_info['avg_val_losses'].append(average_val_loss)
-                    epoch_info['avg_accuracy_on_1'].append(average_1acc)
-                    epoch_info['avg_accuracy_on_0'].append(average_0acc)
-                    epoch_info['avg_error_on_1'].append(average_1err)
-                    epoch_info['avg_error_on_0'].append(average_0err)
-
-                    avg_val_loss_msg = f' |  avg.Val.Loss: {average_val_loss:.4f} (last: {val_loss:.4f})'
-
-                    val_accs_msg = f" - Accs: " \
-                                   f"[ 0 ✔ {average_0acc * 100:.2f} ] [ 1 ✔ {average_1acc * 100:.2f}] " \
-                                   f"[ 0 ✖ {average_0err * 100:.2f} ] [ 1 ✖ {average_1err * 100:.2f} ]"
-
-                    pbar_ep.set_description(
-                        f'[TQDM] Epoch #{epoch + 1} - {avg_train_loss_msg}{avg_val_loss_msg}{val_accs_msg}')
-
-                    # Until the next track switch, we don't want to validate again
-                    already_validated = True
-
-                    # But still skip the training: we need to exit the validation track
-                    continue
-
-                else:
-                    already_validated = False
-
-            if already_validated:
                 continue
-
-            already_validated = False  # On next track switch, if it's a validation track, we will validate
 
             pbar_dl.set_description(
                 f'[TQDM] Training on track {cur_track_idx}/{len(train_loader.tracklist)} ({cur_track_name})')
@@ -215,10 +98,8 @@ def train(model,
             gt_edges = data.y  # Get the true edge labels
 
             # focal loss is implemented differently from the others
-            if loss_not_initialized:
-                train_loss = loss_function(pred_edges, gt_edges, alpha=alpha, gamma=gamma, reduction=reduction)
-            else:
-                train_loss = loss_function(pred_edges, gt_edges)
+
+            train_loss = loss_function(pred_edges, gt_edges)
 
             if torch.isnan(train_loss):
                 raise Exception("Why are we still here? Just to suffer")
@@ -228,15 +109,14 @@ def train(model,
             train_loss.backward()
             optimizer.step()
 
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5, error_if_nonfinite=True)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=20, error_if_nonfinite=True)
 
             pbar_dl.update(1)
 
             total_train_loss += train_loss.item()
 
-            average_train_loss = total_train_loss / (i + 1)
+            average_train_loss = total_train_loss / (j + 1)
 
-            epoch_info['tracklets'].append(i)
             epoch_info['avg_train_losses'].append(average_train_loss)
 
             avg_train_loss_msg = f'avg.Tr.Loss: {average_train_loss:.4f} (last: {train_loss:.4f})'
@@ -244,6 +124,32 @@ def train(model,
             pbar_ep.set_description(f'[TQDM] Epoch #{epoch + 1} - {avg_train_loss_msg}{avg_val_loss_msg}{val_accs_msg}')
 
             last_track_idx = cur_track_idx
+            j += 1
+
+        pbar_ep.set_description(
+            f'[TQDM] Epoch #{epoch + 1} - {avg_train_loss_msg}{avg_val_loss_msg}{val_accs_msg}')
+
+        # VAIDATION
+
+        val_loss, acc_ones, acc_zeros, zeros_as_ones, ones_as_zeros = validation(model=model,
+                                                                                 val_loader=val_loader,
+                                                                                 loss_function= loss_function,
+                                                                                 device= device,
+                                                                                 alpha= alpha,
+                                                                                 gamma= gamma,
+                                                                                 reduction= reduction)
+        epoch_info['avg_val_losses'].append(val_loss)
+        epoch_info['avg_accuracy_on_1'].append(acc_ones)
+        epoch_info['avg_accuracy_on_0'].append(acc_zeros)
+        epoch_info['avg_error_on_1'].append(ones_as_zeros)
+        epoch_info['avg_error_on_0'].append(zeros_as_ones)
+        epoch_info['tracklets'].append(j)
+
+        avg_val_loss_msg = f' |  avg.Val.Loss: {val_loss:.4f})'
+
+        val_accs_msg = f" - Accs: " \
+                       f"[ 0 ✔ {acc_zeros :.2f} ] [ 1 ✔ {acc_ones :.2f}] " \
+                       f"[ 0 ✖ {zeros_as_ones :.2f} ] [ 1 ✖ {ones_as_zeros:.2f} ]"
 
         pbar_ep.set_description(
             f'[TQDM] Epoch #{epoch + 1} - {avg_train_loss_msg}{avg_val_loss_msg}{val_accs_msg}')
@@ -254,9 +160,9 @@ def train(model,
                    epoch=epoch,
                    epoch_info=epoch_info,
                    node_model_name=model.model_dict['node_name'],
-                   edge_model_name=model.model_dict['edge_name'])
+                   edge_model_name=model.model_dict['edge_name'], savepath_adds={'trained_on':mot_train})
 
-    return average_train_loss, average_val_loss
+    return average_train_loss, val_loss
 
 
 if __name__ == '__main__':
@@ -282,10 +188,10 @@ if __name__ == '__main__':
     parser.add_argument('-m', '--MOTtrain', default="MOT17",
                         help="MOT dataset on which the network is trained.")
 
-    parser.add_argument('-M', '--MOTvalidation', default="MOT20",
+    parser.add_argument('-M', '--MOTvalidation', default="MOT17",
                         help="MOT dataset on which the single validate is calculated.")
 
-    parser.add_argument('-B', '--backbone', default="resnet50",
+    parser.add_argument('-B', '--backbone', default="resnet101",
                         help="Visual backbone for nodes feature extraction.")
 
     parser.add_argument('--float16', action='store_true',
@@ -297,7 +203,7 @@ if __name__ == '__main__':
     parser.add_argument('-Z', '--node-model', action='store_true',
                         help="Use the node model instead of the edge model.")
 
-    parser.add_argument('-L', '--loss-function', default="huber",
+    parser.add_argument('-L', '--loss-function', default="focal",
                         help="Loss function to use."
                              "Implemented losses: huber, bce, focal, dice.")
 
@@ -372,15 +278,10 @@ if __name__ == '__main__':
                         help="Sliding window to adopt during testing."
                              "NB: suggested to be subtrack len - linkage window")
 
-    parser.add_argument('-k', '--knn', default=20, type=int,
-                        help="K parameter for kNN reduction."
-                             "NB: a value lower than 20 may exclude ground truths. Set to 0 for no kNN.")
-
-    parser.add_argument('--cosine', action='store_true',
-                        help="Use cosine distance instead of euclidean distance.")
-
     parser.add_argument('--classification', action='store_true',
                         help="Work in classification setting instead of regression.")
+    parser.add_argument('--node_model', action='store_true',
+                        help="node model")
 
     parser.add_argument('--train-preprocessed', action='store_true', default=True,
                         help="Directly use preprocessed data for training dataloader.")
@@ -395,13 +296,13 @@ if __name__ == '__main__':
     # args.classification = True
     # args.loss_function = "focal"
     # args.model = 'transformer'
-    args.backbone = 'resnet50'
-    args.datapath = "data"
-    args.apple = True
-    args.train_preprocessed = True
-    args.val_preprocessed = True
-    args.MOTtrain = "MOT17"
-    args.MOTvalidation = "MOT17"
+    # args.backbone = 'resnet50'
+    # args.datapath = "data"
+    # args.apple = True
+    # args.train_preprocessed = True
+    # args.val_preprocessed = True
+    # args.MOTtrain = "MOT17"
+    # args.MOTvalidation = "MOT17"
     # ------------------------------------------------------------------------------------------------------------------
 
     # There was no preconception of what to do  -cit.
@@ -433,14 +334,6 @@ if __name__ == '__main__':
     heads = args.heads
     learning_rate = args.learning_rate
 
-    # Knn logic
-    if args.knn <= 0:
-        knn_args = None
-    else:
-        knn_args = {
-            'k': args.knn,
-            'cosine': args.cosine
-        }
 
     # Dtype to use
     if args.float16:
@@ -495,7 +388,6 @@ if __name__ == '__main__':
                               detections_file_folder=detections_file_folder,
                               detections_file_name=detections_file_name,
                               dl_mode=True,
-                              knn_pruning_args=knn_args,
                               device=device,
                               dtype=dtype,
                               mps_fallback=mps_fallback,
@@ -510,7 +402,6 @@ if __name__ == '__main__':
                             linkage_window=linkage_window,
                             detections_file_folder=detections_file_folder,
                             detections_file_name=detections_file_name,
-                            knn_pruning_args=knn_args,
                             dl_mode=True,
                             device=device,
                             dtype=dtype,
@@ -521,22 +412,10 @@ if __name__ == '__main__':
 
     network_dict = IMPLEMENTED_MODELS[args.model]
 
-    model = Net(backbone=backbone,
-                layer_size=l_size,
-                n_target_edges=l_size,
-                n_target_nodes=l_size,
-                dtype=dtype,
-                mps_fallback=mps_fallback,
-                edge_features_dim=EDGE_FEATURES_DIM,
-                heads=heads,
-                concat=False,
-                dropout=args.dropout,
-                add_self_loops=False,
-                steps=messages,
-                device=device,
-                model_dict=network_dict,
-                node_features_dim=ImgEncoder.output_dims[backbone],
-                is_edge_model=not args.node_model,
+    model = Net(used_backbone=backbone, layer_size=l_size, n_target_edges=l_size, n_target_nodes=l_size, dtype=dtype,
+                mps_fallback=mps_fallback, heads=heads, concat=False, dropout=args.dropout, add_self_loops=False,
+                steps=messages, device=device, model_dict=network_dict,
+                node_features_dim=ImgEncoder.output_dims[backbone], is_edge_model=not args.node_model,
                 model_type=args.model)
 
     # %% Initialize the model
@@ -579,7 +458,6 @@ if __name__ == '__main__':
                                  epochs=epochs,
                                  device=device,
                                  mps_fallback=mps_fallback,
-                                 loss_not_initialized=loss_not_initialized,
                                  alpha=alpha,
                                  gamma=gamma,
                                  reduction=reduction,

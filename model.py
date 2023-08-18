@@ -1,6 +1,6 @@
 import math
 from typing import Optional, Tuple, Union
-
+from torchvision.models.feature_extraction import create_feature_extractor
 import torch
 import torch.nn.functional as F
 import torch_geometric.nn
@@ -51,7 +51,16 @@ class ImgEncoder(torch.nn.Module):
         'vit_l_32': 1024,
         'vgg16': 4096,
         'vgg19': 4096,
-        # 'efficientnet-b0': 1000,
+        'efficientnet_v2_l': 1280,
+        # 'efficientnet-b7':2560
+    }
+    image_size = {
+        'resnet50': None,
+        'resnet101': None,
+        'vit_l_32': (224, 224),
+        'vgg16': None,
+        'vgg19': None,
+        'efficientnet_v2_l': None
         # 'efficientnet-b7':2560
     }
 
@@ -63,21 +72,23 @@ class ImgEncoder(torch.nn.Module):
         self.output_dim = self.output_dims[model_name]
 
         # TODO: set outdim
+        self.model = getattr(models, self.model_name)(weights=weights)
         if 'resnet' in self.model_name:
-            self.model = getattr(models, self.model_name)(weights=weights)
+            # self.model = getattr(models, self.model_name)(weights=weights)
             self.model = torch.nn.Sequential(*list(self.model.children())[:-1])
 
         elif 'vgg' in self.model_name:
-            self.model = getattr(models, self.model_name)(weights=weights)
+            # self.model = getattr(models, self.model_name)(weights=weights)
             self.model.classifier = self.model.classifier[:-1]
 
         elif 'vit' in self.model_name:
-            self.model = getattr(models, self.model_name)(weights=weights)
-            self.model = torch.nn.Sequential(*list(self.model.children())[:-1])
+            # self.model = getattr(models, self.model_name)(weights=weights)
+            self.model = create_feature_extractor(self.model, return_nodes=['getitem_5'])
 
         elif 'efficientnet' in self.model_name:
-            self.model = EfficientNet.from_pretrained(self.model_name)
-            self.model = torch.nn.Sequential(*list(self.model.children())[:-1])
+            # self.model = EfficientNet.from_pretrained(self.model_name)
+            # self.model = create_feature_extractor(self.model, return_nodes=['features.8'])
+            self.model = create_feature_extractor(self.model, return_nodes=['flatten'])
 
         else:
             raise ValueError('Invalid model name.')
@@ -89,7 +100,11 @@ class ImgEncoder(torch.nn.Module):
     def forward(self, img):
         with torch.no_grad():
             features = self.model(img)
-            features = features.reshape(features.size(0), -1)
+            try:
+                features = features.reshape(features.size(0), -1)
+            except AttributeError:
+                # features can come as dicts
+                features = features.popitem()[1]
             return features
 
 

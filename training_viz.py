@@ -110,6 +110,9 @@ if __name__ == '__main__':
     parser.add_argument("--messages", type=int,
                         help="number of message passing steps",
                         default=6)
+    parser.add_argument("--mot",
+                        help="MOT of reference",
+                        default='MOT17')
 
 
     parser.add_argument("-o", "--save_folder", type=str,
@@ -126,6 +129,7 @@ if __name__ == '__main__':
     layer_size = str(args.layer_size)
     messages = str(args.messages)
     backbone = args.backbone
+    mot =args.mot
 
     del args
     # setup folders
@@ -151,7 +155,7 @@ if __name__ == '__main__':
 
     file_name = predictor + "-predictor_" + "node-model-" + model_name + \
         "_edge-model-base_layer-size-" + layer_size + "_backbone-" + backbone + \
-        "_messages-" + messages
+        "_messages-" + messages+"_trained_on_"+ mot
 
     print("Producing images for: " + file_name)
 

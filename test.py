@@ -12,7 +12,6 @@ def test(model,
          val_loader,
          loss_function,
          device="cuda",
-         loss_not_initialized=True,
          alpha=.95,
          gamma=2,
          reduction='mean',
@@ -24,21 +23,18 @@ def test(model,
     Can be used for both testing and validation.
     """
 
-    # Focal loss is implemented differently from the others
-    if loss_not_initialized:
-        loss_function = loss_function(alpha=alpha, gamma=gamma, reduction=reduction)
-
     model = model.to(device)
     model.eval()
 
-    val_loss, total_val_loss = 0, 0
+    val_loss, total_val_loss, total_0_1, total_1_0, total_1, total_0 = 0, 0, 0, 0, 0, 0
+    avg_0_1, avg_1_0, avg_1, avg_0 = 0, 0, 0, 0
 
-    if not validation_mode:
-        pbar_dl = tqdm(enumerate(val_loader), desc='[TQDM] Testing on track 1/? ', total=val_loader.n_subtracks)
-    else:
-        pbar_dl = enumerate(val_loader)
-
-    for i, data in pbar_dl:
+    # if not validation_mode:
+    pbar_dl = tqdm(enumerate(val_loader), desc='[TQDM] Testing on track 1/? ', total=val_loader.n_subtracks)
+   # else:
+   #     pbar_dl = enumerate(val_loader)
+    j = 0
+    for _, data in pbar_dl:
         cur_track_idx = val_loader.cur_track + 1
         cur_track_name = val_loader.tracklist[val_loader.cur_track]
 
@@ -48,7 +44,7 @@ def test(model,
             cur_track_name = val_loader.tracklist[val_loader.cur_track]
 
             if validation_mode:
-                if cur_track_name not in MOT17_VALIDATION_TRACKS + MOT20_VALIDATION_TRACKS:
+                if (cur_track_name not in MOT17_VALIDATION_TRACKS) and (cur_track_name not in MOT20_VALIDATION_TRACKS):
                     # Skip non-validation tracks if the function is called for validation
                     continue
 
@@ -65,25 +61,37 @@ def test(model,
             zero_mask = gt_edges < zero_threshold
             one_mask = gt_edges > one_threshold
 
-            acc_ones = torch.where(pred_edges[one_mask] == 1.0, 1., 0.).mean()
-            acc_zeros = torch.where(pred_edges[zero_mask] == 0., 1., 0.).mean()
-            ones_as_zeros = torch.where(pred_edges[one_mask] == 0., 1., 0.).mean()
-            zeros_as_ones = torch.where(pred_edges[zero_mask] == 1., 1., 0.).mean()
-            total_val_loss += val_loss
+            acc_ones = torch.where(pred_edges[one_mask] == 1.0, 1., 0.).mean().item()
+            acc_zeros = torch.where(pred_edges[zero_mask] == 0., 1., 0.).mean().item()
+            ones_as_zeros = torch.where(pred_edges[one_mask] == 0., 1., 0.).mean().item()
+            zeros_as_ones = torch.where(pred_edges[zero_mask] == 1., 1., 0.).mean().item()
 
-        avg_val_loss_msg = f'avg.Loss: {(total_val_loss / (i + 1)):.4f} (last: {val_loss:.4f})'
+            total_val_loss += val_loss.item()
+            total_0 += acc_zeros
+            total_1 += acc_ones
+            total_1_0 += ones_as_zeros
+            total_0_1 += zeros_as_ones
 
-        # QUI NEL TESTING NON STIAMO CONTROLLANDO L'ACC AVG MA SOLO LA LAST?
+            avg_0 = total_0 / (j + 1)
+            avg_1 = total_1 / (j + 1)
+            avg_0_1 = total_0_1 / (j + 1)
+            avg_1_0 = total_1_0 / (j + 1)
+            avg_val_loss = total_val_loss / (j + 1)
+
+            j += 1
+
+        avg_val_loss_msg = f'avg.Loss: {avg_val_loss:.4f} (last: {val_loss:.4f})'
 
         val_accs_msg = f"Accs: " \
-                       f"[ 0 ✔ {acc_zeros * 100:.2f} ] [ 1 ✔ {acc_ones * 100:.2f}] " \
-                       f"[ 0 ✖ {zeros_as_ones * 100:.2f} ] [ 1 ✖ {ones_as_zeros * 100:.2f} ]"
+                       f"[ 0 ✔ {avg_0:.2f} ] [ 1 ✔ {avg_1:.2f}] " \
+                       f"[ 0 ✖ {avg_0_1 :.2f} ] [ 1 ✖ {avg_1_0 :.2f} ]"
 
-        if validation_mode:
-            return val_loss, acc_ones, acc_zeros, zeros_as_ones, ones_as_zeros
-        else:
-            pbar_dl.set_description(
-                f'[TQDM] Testing on track {cur_track_idx}/{len(val_loader.tracklist)} ({cur_track_name}) | {avg_val_loss_msg} - {val_accs_msg}')
+        pbar_dl.set_description(
+            f'[TQDM] Validationg on track {cur_track_idx}/{len(val_loader.tracklist)} ({cur_track_name}) | {avg_val_loss_msg} - {val_accs_msg}')
+
+    if validation_mode:
+        return avg_val_loss, avg_1 , avg_0 , avg_0_1 , avg_1_0
+
 
 
 if __name__ == '__main__':
@@ -105,15 +113,15 @@ if __name__ == '__main__':
     parser.add_argument('--output_savepath', default="saves/outputs",
                         help="Folder where outputs are saved.")
 
-    parser.add_argument('-m', '--model', default="timeaware_node_resnet50_classification.pkl",
+    parser.add_argument('-m', '--model', default="node-predictor_node-model-timeaware_edge-model-base_layer-size-500_backbone-resnet50_messages-6_trained_on__MOT20.pkl",
                         help="Name of the network."
                              "NB: the model must be stored in the specified save folder.")
 
-    parser.add_argument('-M', '--MOT', default="MOT17",
+    parser.add_argument('-M', '--MOT', default="MOT20",
                         help="MOT dataset of reference.")
 
     parser.add_argument('-T', '--split', default="train",
-                        elp="MOT dataset split.")
+                        help="MOT dataset split.")
 
     parser.add_argument('--float16', action='store_true',
                         help="Whether to use half floats or not.")
@@ -269,7 +277,6 @@ if __name__ == '__main__':
     test(model=model,
          val_loader=mot_train_dl,
          loss_function=loss_function,
-         loss_not_initialized=loss_not_initialized,
          alpha=alpha,
          gamma=alpha,
          reduction=reduction,

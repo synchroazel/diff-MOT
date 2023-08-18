@@ -1,5 +1,6 @@
 import os.path
 
+import argparse
 import networkx as nx
 import pandas
 import torch
@@ -7,8 +8,7 @@ import torchvision
 from torch_geometric.transforms import ToDevice
 from torch_geometric.utils import to_networkx
 from tqdm import tqdm
-
-import utilities
+from utilities import *
 from model import Net
 from motclass import MotDataset
 from utilities import get_best_device
@@ -17,15 +17,32 @@ from collections import OrderedDict
 
 device = get_best_device()
 
+# CLI args parser
+parser = argparse.ArgumentParser(
+        prog='python train.py',
+        description='Script for training a graph network on the MOT task',
+        epilog='Es: python train.py',
+        formatter_class=argparse.RawTextHelpFormatter)
 
+parser.add_argument('-o', '--outpath', default="trackers/exp_timeaware_nodes_classification_17/",
+                        help="output path")
+
+parser.add_argument('-m','--model', default="models_to_try/node-predictor_node-model-timeaware_edge-model-base_layer-size-500_backbone-resnet50_messages-6_trained_on__MOT17-class.pkl",
+                        help="model to load")
+
+parser.add_argument('-c','--classification', action='store_true')
+parser.add_argument('-v','--validation_only', action='store_true')
+parser.add_argument('--mot', default='17')
+args = parser.parse_args()
 
 # todo: cliargs
-outpath = "trackers/exp_timeaware_nodes_classification_20/"
-model = load_model_pkl("models_to_try/timeaware_node_resnet50_classification.pkl", device=device)  # regression
-classification = True
+outpath = args.outpath
+model = load_model_pkl(args.model, device=device)
+classification = args.classification
+validation = args.validation_only
+mot = args.mot
 
-
-data_loader = MotDataset(dataset_path='/media/dmmp/vid+backup/Data/MOT20',
+data_loader = MotDataset(dataset_path='/media/dmmp/vid+backup/Data/MOT'+mot,
                          split='train',
                          subtrack_len=15,
                          slide=10,
@@ -171,8 +188,7 @@ def build_trajectory_rec(node_idx:int, pyg_graph, nx_graph, node_dists, nodes_to
                              depth=depth)
     return new_id
 
-
-utilities.create_folders(outpath)
+create_folders(outpath)
 
 def build_trajectories(graph, preds, ths=.33, classification=False):
     global nodes_dict
@@ -207,9 +223,12 @@ def build_trajectories(graph, preds, ths=.33, classification=False):
 
 
 previous_track_idx = 0
+validation_only = validation
 
 for _, data in tqdm(enumerate(data_loader), desc='[TQDM] Converting tracklet', total=data_loader.n_subtracks): # todo: explain track
     cur_track_idx = data_loader.cur_track
+    cur_track_name = data_loader.tracklist[data_loader.cur_track]
+
 
     if cur_track_idx != previous_track_idx and cur_track_idx != 0:
         cur_track_name = data_loader.tracklist[previous_track_idx]
@@ -231,7 +250,8 @@ for _, data in tqdm(enumerate(data_loader), desc='[TQDM] Converting tracklet', t
                                              'z'])
         # todo: remove
         # exit(1)
-
+    if validation_only and ((cur_track_name not in MOT17_VALIDATION_TRACKS) and (cur_track_name not in MOT20_VALIDATION_TRACKS)):
+        continue
 
 
     data = ToDevice(device.type)(data)

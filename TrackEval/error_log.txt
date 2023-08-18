@@ -4756,3 +4756,73 @@ trackeval.utils.TrackEvalException: Tracker predicts the same ID more than once 
 
 
 
+MotChallenge2DBox
+trackers
+multiprocessing.pool.RemoteTraceback: 
+"""
+Traceback (most recent call last):
+  File "/usr/lib/python3.10/multiprocessing/pool.py", line 125, in worker
+    result = (True, func(*args, **kwds))
+  File "/usr/lib/python3.10/multiprocessing/pool.py", line 48, in mapstar
+    return list(map(*args))
+  File "/home/dmmp/tesi/diff-MOT/TrackEval/trackeval/_timing.py", line 64, in wrap
+    return f(*args, **kw)
+  File "/home/dmmp/tesi/diff-MOT/TrackEval/trackeval/eval.py", line 197, in eval_sequence
+    seq_res[cls][met_name] = metric.eval_sequence(data)
+  File "/home/dmmp/tesi/diff-MOT/TrackEval/trackeval/_timing.py", line 64, in wrap
+    return f(*args, **kw)
+  File "/home/dmmp/tesi/diff-MOT/TrackEval/trackeval/metrics/identity.py", line 66, in eval_sequence
+    fp_mat = np.zeros((num_gt_ids + num_tracker_ids, num_gt_ids + num_tracker_ids))
+numpy.core._exceptions._ArrayMemoryError: Unable to allocate 88.6 GiB for an array with shape (109047, 109047) and data type float64
+"""
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/dmmp/tesi/diff-MOT/TrackEval/trackeval/eval.py", line 81, in evaluate
+    results = pool.map(_eval_sequence, seq_list)
+  File "/usr/lib/python3.10/multiprocessing/pool.py", line 367, in map
+    return self._map_async(func, iterable, mapstar, chunksize).get()
+  File "/usr/lib/python3.10/multiprocessing/pool.py", line 774, in get
+    raise self._value
+numpy.core._exceptions._ArrayMemoryError: Unable to allocate 88.6 GiB for an array with shape (109047, 109047) and data type float64
+
+
+
+
+
+MotChallenge2DBox
+trackers
+multiprocessing.pool.RemoteTraceback: 
+"""
+Traceback (most recent call last):
+  File "/usr/lib/python3.10/multiprocessing/pool.py", line 125, in worker
+    result = (True, func(*args, **kwds))
+  File "/usr/lib/python3.10/multiprocessing/pool.py", line 48, in mapstar
+    return list(map(*args))
+  File "/home/dmmp/tesi/diff-MOT/TrackEval/trackeval/_timing.py", line 64, in wrap
+    return f(*args, **kw)
+  File "/home/dmmp/tesi/diff-MOT/TrackEval/trackeval/eval.py", line 197, in eval_sequence
+    seq_res[cls][met_name] = metric.eval_sequence(data)
+  File "/home/dmmp/tesi/diff-MOT/TrackEval/trackeval/_timing.py", line 64, in wrap
+    return f(*args, **kw)
+  File "/home/dmmp/tesi/diff-MOT/TrackEval/trackeval/metrics/identity.py", line 66, in eval_sequence
+    fp_mat = np.zeros((num_gt_ids + num_tracker_ids, num_gt_ids + num_tracker_ids))
+numpy.core._exceptions._ArrayMemoryError: Unable to allocate 88.6 GiB for an array with shape (109047, 109047) and data type float64
+"""
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/dmmp/tesi/diff-MOT/TrackEval/trackeval/eval.py", line 81, in evaluate
+    results = pool.map(_eval_sequence, seq_list)
+  File "/usr/lib/python3.10/multiprocessing/pool.py", line 367, in map
+    return self._map_async(func, iterable, mapstar, chunksize).get()
+  File "/usr/lib/python3.10/multiprocessing/pool.py", line 774, in get
+    raise self._value
+numpy.core._exceptions._ArrayMemoryError: Unable to allocate 88.6 GiB for an array with shape (109047, 109047) and data type float64
+
+
+
+
+

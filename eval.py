@@ -7,7 +7,7 @@ if __name__ == '__main__':
     parser.add_argument('--tracker_path', type=str, default='trackers',
                         help='Path to the folder containing all trackers.')
 
-    parser.add_argument('--split', type=str, default='MOT20-train-all',
+    parser.add_argument('--split', type=str, default='MOT17-validation',
                         help='The name of the seqmap containing the list of tracks to evaluate.\n'
                              'All seqmaps for MOTX are assumed to be in MOTX/seqmaps.')
 
@@ -18,7 +18,7 @@ if __name__ == '__main__':
                         help='Path to the folder where the results will be saved.')
 
     # Not really sure of its role
-    parser.add_argument('--tracker_sub_folder', type=str, default='exp_timeaware_nodes_classification_20',
+    parser.add_argument('--tracker_sub_folder', type=str, default='exp_timeaware_nodes_classification_17',
                         help='Subfolder of tracker_path where the tracker files are located.')
 
     args = parser.parse_args()
