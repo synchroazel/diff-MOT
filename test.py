@@ -228,7 +228,7 @@ if __name__ == '__main__':
         case 'bce':
             loss_function = IMPLEMENTED_LOSSES[loss_type]()
         case 'focal':
-            loss_function = IMPLEMENTED_LOSSES[loss_type](alpha=alpha, gamma=gamma)
+            loss_function = IMPLEMENTED_LOSSES[loss_type](alpha=alpha, gamma=gamma, device=device)
         case 'berhu':
             raise NotImplemented("BerHu loss has not been implemented yet")
         case _:

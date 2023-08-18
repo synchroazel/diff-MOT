@@ -280,6 +280,7 @@ if __name__ == '__main__':
 
     parser.add_argument('--classification', action='store_true',
                         help="Work in classification setting instead of regression.")
+
     parser.add_argument('--node_model', action='store_true',
                         help="node model")
 
@@ -299,8 +300,8 @@ if __name__ == '__main__':
     # args.backbone = 'resnet50'
     # args.datapath = "data"
     # args.apple = True
-    # args.train_preprocessed = True
-    # args.val_preprocessed = True
+    args.train_preprocessed = True
+    args.val_preprocessed = False
     # args.MOTtrain = "MOT17"
     # args.MOTvalidation = "MOT17"
     # ------------------------------------------------------------------------------------------------------------------
@@ -366,7 +367,7 @@ if __name__ == '__main__':
         case 'bce' | 'mae' | 'mse':
             loss_function = IMPLEMENTED_LOSSES[loss_type]()
         case 'focal':
-            loss_function = IMPLEMENTED_LOSSES[loss_type](alpha=alpha, gamma=gamma)
+            loss_function = IMPLEMENTED_LOSSES[loss_type](alpha=alpha, gamma=gamma, device=device)
         # loss_not_initialized = True
         case 'berhu':
             raise NotImplemented("BerHu loss has not been implemented yet")
