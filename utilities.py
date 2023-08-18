@@ -161,9 +161,9 @@ def load_model_pkl(pkl_path, device='cpu'):
 class SigmoidFocalLoss(nn.Module):
     "Non weighted version of Focal Loss"
 
-    def __init__(self, alpha=.25, gamma=2):
+    def __init__(self, alpha=.25, gamma=2, device='cuda'):
         super(SigmoidFocalLoss, self).__init__()
-        self.alpha = torch.tensor([alpha, 1 - alpha]).cuda()
+        self.alpha = torch.tensor([alpha, 1 - alpha]).to(device)
         self.gamma = gamma
 
     def forward(self, inputs, targets):
