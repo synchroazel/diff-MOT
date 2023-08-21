@@ -1,16 +1,31 @@
 import argparse
-import random
+import warnings
 
 from torch_geometric.transforms import ToDevice
 
-from model import ImgEncoder, IMPLEMENTED_MODELS
-from motclass import MotDataset
+from diff_model import ImgEncoder, IMPLEMENTED_MODELS, Net
+from diff_motclass import MotDataset
 from puzzle_diff.model.spatial_diffusion import *
+
 from utilities import *
 from utilities import get_best_device
+from diff_test import test
+
+warnings.filterwarnings("ignore")
 
 
 # %% Function definitions
+
+def validation(model,
+               val_loader,
+               loss_function,
+               device):
+    """
+    Wrapper around test function, used for validation.
+    Will skip the tracks which are not chosen for validation.
+    """
+    return test(validation_mode=True, **locals())
+
 
 def train(model,
           train_loader,
@@ -31,6 +46,8 @@ def train(model,
     pbar_ep = tqdm(range(epochs), desc='[TQDM] Epoch #1 ', position=0, leave=False,
                    bar_format="{desc:<5}{percentage:3.0f}%|{bar}{r_bar}")
 
+    average_train_loss, average_val_loss = 1e3, 1e3
+
     for epoch in pbar_ep:
 
         epoch_info = {
@@ -48,24 +65,27 @@ def train(model,
         pbar_dl = tqdm(enumerate(train_loader), desc='[TQDM] Training on track 1/? ', total=train_loader.n_subtracks,
                        bar_format="{desc:<5}{percentage:3.0f}%|{bar}{r_bar}")
 
-        last_track_idx = 0
-        i = 0
-        for i, data in pbar_dl:
+        avg_train_loss_msg, avg_val_loss_msg, val_accs_msg = "", "", ""  # Useful to initialize for a nicer TQDM
+
+        j = 0
+
+        for _, data in pbar_dl:
+
             data = ToDevice(device.type)(data)
 
             cur_track_idx = train_loader.cur_track + 1
             cur_track_name = train_loader.tracklist[train_loader.cur_track]
 
+            # IF VALIDATION TRACK THEN IGNORE
+            if (cur_track_name in MOT17_VALIDATION_TRACKS) or (cur_track_name in MOT20_VALIDATION_TRACKS):
+                pbar_dl.set_description(
+                    f'[TQDM] Skipping track {cur_track_idx}/{len(train_loader.tracklist)} ({cur_track_name})')
+                continue
+
             pbar_dl.set_description(
                 f'[TQDM] Training on track {cur_track_idx}/{len(train_loader.tracklist)} ({cur_track_name})')
 
-            # On track switch, save the model
-            if cur_track_idx != last_track_idx and cur_track_idx != 1:
-                save_model(model, mps_fallback=mps_fallback, classification=classification, epoch=epoch,
-                           epoch_info=epoch_info,
-                           savepath_adds={'extra': 'diffusion'})
-
-            " Training step "
+            """ Training step """
 
             # One-hot encoded y
             oh_y = torch.nn.functional.one_hot(data.y.to(torch.int64), -1)
@@ -92,102 +112,58 @@ def train(model,
             optimizer.zero_grad()
             train_loss.backward()
             optimizer.step()
+
             torch.nn.utils.clip_grad_norm_(model.parameters(), 100)
 
             pbar_dl.update(1)
 
-            " Validation step "
-            id_validate = random.choice(range(0, val_loader.n_subtracks))
-            val_loss, acc_ones, acc_zeros, zeros_as_ones, ones_as_zeros = single_validate(model=model,
-                                                                                          val_loader=val_loader,
-                                                                                          loss_function=loss_function,
-                                                                                          idx=id_validate,
-                                                                                          device=device)
-
             total_train_loss += train_loss.item()
-            total_val_loss += val_loss
-            total_0acc += acc_zeros
-            total_0err += zeros_as_ones
-            total_1acc += acc_ones
-            total_1err += ones_as_zeros
 
-            average_train_loss = total_train_loss / (i + 1)
-            average_val_loss = total_val_loss / (i + 1)
-            average_0acc = total_0acc / (i + 1)
-            average_0err = total_0err / (i + 1)
-            average_1acc = total_1acc / (i + 1)
-            average_1err = total_1err / (i + 1)
+            average_train_loss = total_train_loss / (j + 1)
 
-            epoch_info['tracklets'].append(i)
             epoch_info['avg_train_losses'].append(average_train_loss)
-            epoch_info['avg_val_losses'].append(average_val_loss)
-            epoch_info['avg_accuracy_on_1'].append(average_0acc)
-            epoch_info['avg_accuracy_on_0'].append(average_0err)
-            epoch_info['avg_error_on_1'].append(average_1acc)
-            epoch_info['avg_error_on_0'].append(average_1err)
-
-            " Update progress "
 
             avg_train_loss_msg = f'avg.Tr.Loss: {average_train_loss:.4f} (last: {train_loss:.4f})'
-            avg_val_loss_msg = f'avg.Val.Loss: {average_val_loss:.4f} (last: {val_loss:.4f})'
 
-            avg_0acc_msg = f'avg. 0 acc: {average_0acc:.2f} (last: {acc_zeros:.2f})'
-            avg_1acc_loss_msg = f'avg. 1 acc: {average_1acc:.2f} (last: {acc_ones:.2f})'
-            avg_10_loss_msg = f'avg. 1 as 0: {average_1err:.2f} (last: {ones_as_zeros:.2f})'
-            avg_01_loss_msg = f'avg. 0 as 1: {average_0err:.2f} (last: {zeros_as_ones:.2f})'
+            pbar_ep.set_description(f'[TQDM] Epoch #{epoch + 1} - {avg_train_loss_msg}{avg_val_loss_msg}{val_accs_msg}')
 
-            pbar_ep.set_description(
-                f'[TQDM] Epoch #{epoch + 1} - {avg_train_loss_msg} - {avg_val_loss_msg} - {avg_0acc_msg} - {avg_1acc_loss_msg} - {avg_10_loss_msg} - {avg_01_loss_msg}')
+            j += 1
 
-            last_track_idx = cur_track_idx
+        pbar_ep.set_description(
+            f'[TQDM] Epoch #{epoch + 1} - {avg_train_loss_msg}{avg_val_loss_msg}{val_accs_msg}')
 
-        pbar_ep.set_description(f'[TQDM] Epoch #{epoch + 1} - avg.Loss: {(total_train_loss / (i + 1)):.4f}')
+        """ Validation """
 
+        val_loss, acc_ones, acc_zeros, zeros_as_ones, ones_as_zeros = validation(model=model,
+                                                                                 val_loader=val_loader,
+                                                                                 loss_function=loss_function,
+                                                                                 device=device)
+        epoch_info['avg_val_losses'].append(val_loss)
+        epoch_info['avg_accuracy_on_1'].append(acc_ones)
+        epoch_info['avg_accuracy_on_0'].append(acc_zeros)
+        epoch_info['avg_error_on_1'].append(ones_as_zeros)
+        epoch_info['avg_error_on_0'].append(zeros_as_ones)
+        epoch_info['tracklets'].append(j)
 
-def single_validate(model,
-                    val_loader,
-                    loss_function,
-                    idx,
-                    device):
-    """
-    Validate the model on a single subtrack, given a MOT dataloader and an index.
-    """
-    model.eval()
+        avg_val_loss_msg = f' |  avg.Val.Loss: {val_loss:.4f})'
 
-    data = val_loader[idx]
+        val_accs_msg = f" - Accs: " \
+                       f"[ 0 ✔ {acc_zeros :.2f} ] [ 1 ✔ {acc_ones :.2f}] " \
+                       f"[ 0 ✖ {zeros_as_ones :.2f} ] [ 1 ✖ {ones_as_zeros:.2f} ]"
 
-    with torch.no_grad():
-        data = ToDevice(device.type)(data)
+        pbar_ep.set_description(
+            f'[TQDM] Epoch #{epoch + 1} - {avg_train_loss_msg}{avg_val_loss_msg}{val_accs_msg}')
 
-        gt_edges = data.y
-
-        # One-hot encoded y - INVERSE!
-        oh_y = torch.nn.functional.one_hot(data.y.to(torch.int64), -1)
-
-        # Edge attributes
-        edge_attr = data.edge_attr
-
-        # Edge indexes
-        edge_index = data.edge_index
-
-        _, pred_edges_oh = model.p_sample_loop(shape=(oh_y.shape[0], 2),
-                                               edge_feats=edge_attr,
-                                               node_feats=data.detections,
-                                               edge_index=edge_index)
-
-    pred_edges = torch.where(pred_edges_oh[:, 1] > pred_edges_oh[:, 0], 1., 0.)
-
-    loss = loss_function(oh_y, pred_edges)
-
-    zero_mask = gt_edges <= .5
-    one_mask = gt_edges > .5
-
-    acc_ones = torch.where(pred_edges[one_mask] == 1., 1., 0.).mean()
-    acc_zeros = torch.where(pred_edges[zero_mask] == 0., 1., 0.).mean()
-    ones_as_zeros = torch.where(pred_edges[one_mask] == 0., 1., 0.).mean()
-    zeros_as_ones = torch.where(pred_edges[zero_mask] == 1., 1., 0.).mean()
-
-    return loss.item(), acc_ones.item(), acc_zeros.item(), zeros_as_ones.item(), ones_as_zeros.item()
+        save_model(model,
+                   mps_fallback=mps_fallback,
+                   classification=classification,
+                   epoch=epoch,
+                   epoch_info=epoch_info,
+                   node_model_name=model.model.model_dict['node_name'],
+                   edge_model_name=model.model.model_dict['edge_name'],
+                   savepath_adds={'trained_on': mot_train,
+                                  "CIRO":'DIFFUSION'}# TODO: remove
+                   )
 
 
 # %% CLI args parser
@@ -199,7 +175,7 @@ parser = argparse.ArgumentParser(
     formatter_class=argparse.RawTextHelpFormatter)
 
 # TODO: remove the default option before deployment
-parser.add_argument('-D', '--datapath', default="data",
+parser.add_argument('-D', '--datapath', default="/media/dmmp/vid+backup/Data",
                     help="Path to the folder containing the MOT datasets."
                          "NB: This project assumes a MOT dataset, this project has been tested with MOT17 and MOT20")
 parser.add_argument('--model_savepath', default="saves/models",
@@ -217,7 +193,7 @@ parser.add_argument('-N', '--message_layer_nodes', default="base",
                          "- base (layer proposed on Neural Solver),\n"
                          "- attention (GATv2Conv),\n"
                          "- transformer")
-parser.add_argument('-B', '--backbone', default="resnet50",
+parser.add_argument('-B', '--backbone', default="efficientnet_v2_l",
                     help="Visual backbone for nodes feature extraction.")
 parser.add_argument('--float16', action='store_true',
                     help="Whether to use half floats or not.")
@@ -242,7 +218,7 @@ parser.add_argument('--reduction', default="mean",
                          "Implemented reductions: mean, sum")
 parser.add_argument('-l', '--learning_rate', default=0.001, type=float,
                     help="Learning rate.")
-parser.add_argument('-b', '--diff-steps', default=600, type=int,
+parser.add_argument('-b', '--diff-steps', default=100, type=int, # todo: change
                     help="Number of steps of the Diffusion process.")
 parser.add_argument('--dropout', default=0.3, type=float,
                     help="Dropout probability.")
@@ -328,21 +304,23 @@ args.model = "timeaware"
 
 network_dict = IMPLEMENTED_MODELS[args.model]
 
-gnn = Net(backbone=backbone,
-          layer_tipe=layer_type,
-          layer_size=l_size,
-          dtype=dtype,
-          mps_fallback=mps_fallback,
-          edge_features_dim=70,
-          heads=heads,
-          concat=False,
-          dropout=args.dropout,
-          add_self_loops=False,
-          steps=messages,
-          device=device,
-          model_dict=network_dict,
-          node_features_dim=ImgEncoder.output_dims[backbone],
-          is_edge_model=not args.node_model)
+gnn = Net(
+    layer_tipe=layer_type,
+    layer_size=l_size,
+    dtype=dtype,
+    mps_fallback=mps_fallback,
+    edge_features_dim=70,
+    heads=heads,
+    concat=False,
+    dropout=args.dropout,
+    add_self_loops=False,
+    steps=messages,
+    diff_steps=diffusion_steps,
+    device=device,
+    model_dict=network_dict,
+    node_features_dim=ImgEncoder.output_dims[backbone],
+    is_edge_model=not args.node_model,
+    used_backbone=backbone)
 
 model = GNN_Diffusion(custom_gnn=gnn,
                       steps=diffusion_steps,
@@ -367,7 +345,8 @@ mot_train_dl = MotDataset(dataset_path=train_dataset_path,
                           dtype=dtype,
                           preprocessed=True,  # !
                           mps_fallback=mps_fallback,
-                          classification=classification)
+                          classification=classification,
+                          feature_extraction_backbone= backbone)
 
 mot_val_dl = MotDataset(dataset_path=val_dataset_path,
                         split='train',
@@ -379,8 +358,10 @@ mot_val_dl = MotDataset(dataset_path=val_dataset_path,
                         dl_mode=True,
                         device=device,
                         dtype=dtype,
-                        preprocessed=False,  # !
-                        mps_fallback=mps_fallback)
+                        preprocessed=True,  # !
+                        classification=classification,
+                        mps_fallback=mps_fallback,
+                        feature_extraction_backbone= backbone)
 
 # Print information
 print("[INFO] Hyperparameters and info:")

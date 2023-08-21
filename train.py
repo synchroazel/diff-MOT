@@ -19,10 +19,7 @@ torch.autograd.set_detect_anomaly(True)
 def validation(model,
                val_loader,
                loss_function,
-               device,
-               alpha,
-               gamma,
-               reduction):
+               device):
     """
     Wrapper around test function, used for validation.
     Will skip the tracks which are not chosen for validation.
@@ -97,7 +94,6 @@ def train(model,
             pred_edges = model(data)  # Get the predicted edge labels
             gt_edges = data.y  # Get the true edge labels
 
-            # focal loss is implemented differently from the others
 
             train_loss = loss_function(pred_edges, gt_edges)
 
@@ -134,16 +130,12 @@ def train(model,
         val_loss, acc_ones, acc_zeros, zeros_as_ones, ones_as_zeros = validation(model=model,
                                                                                  val_loader=val_loader,
                                                                                  loss_function= loss_function,
-                                                                                 device= device,
-                                                                                 alpha= alpha,
-                                                                                 gamma= gamma,
-                                                                                 reduction= reduction)
+                                                                                 device= device)
         epoch_info['avg_val_losses'].append(val_loss)
         epoch_info['avg_accuracy_on_1'].append(acc_ones)
         epoch_info['avg_accuracy_on_0'].append(acc_zeros)
         epoch_info['avg_error_on_1'].append(ones_as_zeros)
         epoch_info['avg_error_on_0'].append(zeros_as_ones)
-        epoch_info['tracklets'].append(j)
 
         avg_val_loss_msg = f' |  avg.Val.Loss: {val_loss:.4f})'
 
@@ -191,7 +183,7 @@ if __name__ == '__main__':
     parser.add_argument('-M', '--MOTvalidation', default="MOT17",
                         help="MOT dataset on which the single validate is calculated.")
 
-    parser.add_argument('-B', '--backbone', default="resnet101",
+    parser.add_argument('-B', '--backbone', default="efficientnet_v2_l",
                         help="Visual backbone for nodes feature extraction.")
 
     parser.add_argument('--float16', action='store_true',
@@ -223,7 +215,7 @@ if __name__ == '__main__':
                         help="Reduction logic for the loss."
                              "Implemented reductions: mean, sum.")
 
-    parser.add_argument('--model', default="timeaware",
+    parser.add_argument('--model', default="attention",
                         help="Model to train Implemented models: timeaware, transformer, attention.")
 
     parser.add_argument('--past-aggregation', default="mean",
@@ -260,11 +252,12 @@ if __name__ == '__main__':
     parser.add_argument('--delta', default=.3, type=float,
                         help="Delta parameter for the huber loss")
 
-    parser.add_argument('--detection-gt-folder', default="gt",
+    parser.add_argument('--detection_folder', default="gt",
                         help="detection ground truth folder")
 
-    parser.add_argument('--detection-gt-file', default="gt.txt",
+    parser.add_argument('--detection_file', default="gt.txt",
                         help="detection ground truth folder")
+
 
     parser.add_argument('--subtrack-len', default=15, type=int,
                         help="Length of the subtrack."
@@ -312,8 +305,8 @@ if __name__ == '__main__':
 
     # Paths
     mot_path = args.datapath
-    detections_file_folder = args.detection_gt_folder
-    detections_file_name = args.detection_gt_file
+    detections_file_folder = args.detection_folder
+    detections_file_name = args.detection_file
 
     # MOT to use
     mot_train = args.MOTtrain

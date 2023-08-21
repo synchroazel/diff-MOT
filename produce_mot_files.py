@@ -27,12 +27,20 @@ parser = argparse.ArgumentParser(
 parser.add_argument('-o', '--outpath', default="trackers/exp_timeaware_nodes_classification_17/",
                         help="output path")
 
-parser.add_argument('-m','--model', default="models_to_try/node-predictor_node-model-timeaware_edge-model-base_layer-size-500_backbone-resnet50_messages-6_trained_on__MOT17-class.pkl",
+parser.add_argument('-m','--model', default="models_to_try/edge-predictor_node-model-timeaware_edge-model-base_layer-size-500_backbone-vit_l_32_messages-6_trained_on_MOT17-class.pkl",
                         help="model to load")
-
+parser.add_argument('-b','--backbone', default="efficientnet_v2_l",
+                        help="backbone to load")
 parser.add_argument('-c','--classification', action='store_true')
 parser.add_argument('-v','--validation_only', action='store_true')
 parser.add_argument('--mot', default='17')
+
+parser.add_argument('--detection_folder', default="gt",
+                    help="detection ground truth folder")
+
+parser.add_argument('--detection_file', default="gt.txt",
+                    help="detection ground truth folder")
+
 args = parser.parse_args()
 
 # todo: cliargs
@@ -41,18 +49,23 @@ model = load_model_pkl(args.model, device=device)
 classification = args.classification
 validation = args.validation_only
 mot = args.mot
+backbone = args.backbone
+
+folder = args.detection_folder
+file = args.detection_file
 
 data_loader = MotDataset(dataset_path='/media/dmmp/vid+backup/Data/MOT'+mot,
                          split='train',
                          subtrack_len=15,
                          slide=10,
                          linkage_window=5,
-                         detections_file_folder='gt',
-                         detections_file_name='gt.txt',
+                         detections_file_folder=folder,
+                         detections_file_name=file,
                          dl_mode=True,
                          device=device,
                          dtype=torch.float32,
-                         classification=classification)
+                         classification=classification,
+                         feature_extraction_backbone=backbone)
 
 #model.eval()
 
@@ -257,7 +270,6 @@ for _, data in tqdm(enumerate(data_loader), desc='[TQDM] Converting tracklet', t
     data = ToDevice(device.type)(data)
     preds = model(data)
     build_trajectories(data, preds=preds, classification=classification)
-    # build_trajectories(data, data.y)
     track_frame += data_loader.slide
 
 cur_track_name = data_loader.tracklist[cur_track_idx]

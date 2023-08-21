@@ -8,7 +8,7 @@ from functools import partial
 from pathlib import Path
 from typing import Any
 
-from motclass import MOTGraph
+from diff_motclass import MOTGraph
 
 import einops
 import matplotlib
@@ -19,7 +19,7 @@ import pytorch_lightning as pl
 import scipy
 import timm
 
-from model import Net
+from diff_model import Net
 
 # from .network_modules import (
 #     default,

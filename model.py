@@ -333,7 +333,7 @@ class GATv2ConvWithEdgeUpdate(GATv2Conv):
              heads:int=6,
         **padding_kwargs,
     ):
-        super(GATv2ConvWithEdgeUpdate,self).__init__(node_dim=0,
+        super(GATv2ConvWithEdgeUpdate,self).__init__(
                                                      in_channels=in_channels, out_channels=out_channels,
                                                       heads=heads, dropout=dropout, add_self_loops=False,
                                                       edge_dim=n_edge_features, fill_value=agg_base)
@@ -442,7 +442,7 @@ class GATv2ConvWithEdgeUpdate(GATv2Conv):
             edge_attr = self.lin_edge(edge_attr)
             edge_attr = edge_attr.view(-1, self.heads, self.out_channels)
             x += edge_attr  # ----> edges are updeted here <-----
-            self.__edge_attr__ = edge_attr
+            self.__edge_attr__ = edge_attr.mean(dim=1)
 
         x = F.leaky_relu(x, self.negative_slope)
         alpha = (x * self.att).sum(dim=-1)
@@ -475,7 +475,7 @@ def build_custom_mp(n_target_nodes, n_target_edges, n_features, n_edge_features,
         case 'transformer':
             return model_dict['node'](in_channels=n_features, out_channels=n_target_nodes, heads=heads, dropout=dropout).to(device=device)
         case 'attention':
-            return model_dict['node'](in_channels=n_features, out_channels=n_target_nodes, heads=heads, dropout=dropout, agg_base=base_aggregation).to(device=device)
+            return model_dict['node'](in_channels=n_features, out_channels=n_target_nodes, heads=heads, dropout=dropout, agg_base=base_aggregation, n_edge_features=n_edge_features).to(device=device)
         case _:
             pass
 

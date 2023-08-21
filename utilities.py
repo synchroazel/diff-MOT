@@ -213,10 +213,12 @@ EPSILON = 0.0001  # Used to avoid infinity
 
 MOT20_VALIDATION_TRACKS = {'MOT20-01':True,'MOT20-02':True} # dictionary for having a faster check access
 MOT17_VALIDATION_TRACKS = {'MOT17-02-SDP':True,
-                           'MOT17-04-FRCNN':True,
-                           'MOT17-05-SDP':True,
+                           'MOT17-02-FRCNN':True,
+                           'MOT17-02-DPM':True,
+                           'MOT17-09-DPM':True,
+                           'MOT17-09-SDP':True,
                            'MOT17-09-FRCNN':True,
-                           'MOT17-05-DPM':True,
-                           'MOT17-10-FRCNN':True,
+                           'MOT17-13-DPM':True,
+                           'MOT17-13-FRCNN':True,
                            'MOT17-13-SDP':True,
                            }
