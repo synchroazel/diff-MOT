@@ -139,11 +139,11 @@ if __name__ == '__main__':
                         help="Alpha parameter for the focal loss.")
 
     # TODO: describe how it works
-    parser.add_argument('-g', '--gamma', default=2., type=float,
+    parser.add_argument('-g', '--gamma', default=3., type=float,
                         help="Gamma parameter for the focal loss.")
 
     # TODO: describe how it works
-    parser.add_argument('-d', '--delta', default=.4, type=float,
+    parser.add_argument('-d', '--delta', default=.3, type=float,
                         help="Delta parameter for the huber loss.")
 
     # TODO: describe how it works
@@ -169,12 +169,6 @@ if __name__ == '__main__':
     parser.add_argument('--slide', default=10, type=int,
                         help="Sliding window to adopt during testing. NB: suggested to be subtrack len - linkage window.")
 
-    parser.add_argument('-k', '--knn', default=20, type=int,
-                        help="K parameter for knn reduction."
-                             "NB: a value lower than 20 may exclude ground truths. Set to 0 for no kNN.")
-
-    parser.add_argument('--cosine', action='store_true',
-                        help="Use cosine distance instead of euclidean distance.")
 
     parser.add_argument('--classification', action='store_true',
                         help="Work in classification setting instead of regression.")
@@ -226,6 +220,8 @@ if __name__ == '__main__':
             loss_function = IMPLEMENTED_LOSSES[loss_type]()
         case 'focal':
             loss_function = IMPLEMENTED_LOSSES[loss_type](alpha=alpha, gamma=gamma, device=device)
+        case 'dice':
+            loss_function = IMPLEMENTED_LOSSES[loss_type](alpha=alpha, gamma=gamma, device=device)
         case 'berhu':
             raise NotImplemented("BerHu loss has not been implemented yet")
         case _:
@@ -274,9 +270,6 @@ if __name__ == '__main__':
     test(model=model,
          val_loader=mot_train_dl,
          loss_function=loss_function,
-         alpha=alpha,
-         gamma=alpha,
-         reduction=reduction,
          device=device,
          zero_threshold=zero_threshold,
          one_threshold=one_threshold)

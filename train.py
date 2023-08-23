@@ -37,13 +37,14 @@ def train(model,
           mps_fallback=False,
           alpha=.95,
           gamma=2,
-          reduction='mean',
           classification=False) -> (float, float):
     """
     Main training logic for the GNN model.
     Will train on all training tracks, and validate on all validation partition at the end of each track.
     """
     global mot_train
+    global loss_type
+    global args
 
     model = model.to(device)
     model.train()
@@ -152,7 +153,7 @@ def train(model,
                    epoch=epoch,
                    epoch_info=epoch_info,
                    node_model_name=model.model_dict['node_name'],
-                   edge_model_name=model.model_dict['edge_name'], savepath_adds={'trained_on':mot_train})
+                   edge_model_name=model.model_dict['edge_name'], savepath_adds={'trained_on':mot_train,'loss':loss_type,'alpha':alpha,'gamma':gamma,'optimizer':args.optimizer})
 
     return average_train_loss, val_loss
 
@@ -199,13 +200,13 @@ if __name__ == '__main__':
                         help="Loss function to use."
                              "Implemented losses: huber, bce, focal, dice.")
 
-    parser.add_argument('--epochs', default=1, type=int,
+    parser.add_argument('--epochs', default=10, type=int,
                         help="Number of epochs.")
 
-    parser.add_argument('-n', '--layer-size', default=500, type=int,
+    parser.add_argument('-n', '--layer-size', default=250, type=int,
                         help="Size of hidden layers.")
 
-    parser.add_argument('-p', '--messages', default=6, type=int,
+    parser.add_argument('-p', '--messages', default=8, type=int,
                         help="Number of message passing layers.")
 
     parser.add_argument('--heads', default=6, type=int,
@@ -215,7 +216,7 @@ if __name__ == '__main__':
                         help="Reduction logic for the loss."
                              "Implemented reductions: mean, sum.")
 
-    parser.add_argument('--model', default="attention",
+    parser.add_argument('--model', default="transformer",
                         help="Model to train Implemented models: timeaware, transformer, attention.")
 
     parser.add_argument('--past-aggregation', default="mean",
@@ -245,7 +246,7 @@ if __name__ == '__main__':
                         help="Alpha parameter for the focal loss.")
 
     # TODO: describe how it works
-    parser.add_argument('--gamma', default=5., type=float,
+    parser.add_argument('--gamma', default=3., type=float,
                         help="Gamma parameter for the focal loss")
 
     # TODO: describe how it works
@@ -271,7 +272,7 @@ if __name__ == '__main__':
                         help="Sliding window to adopt during testing."
                              "NB: suggested to be subtrack len - linkage window")
 
-    parser.add_argument('--classification', action='store_true',
+    parser.add_argument('--regression', action='store_true',
                         help="Work in classification setting instead of regression.")
 
     parser.add_argument('--node_model', action='store_true',
@@ -293,14 +294,14 @@ if __name__ == '__main__':
     # args.backbone = 'resnet50'
     # args.datapath = "data"
     # args.apple = True
-    args.train_preprocessed = True
-    args.val_preprocessed = False
+    # args.train_preprocessed = True
+    # args.val_preprocessed = False
     # args.MOTtrain = "MOT17"
     # args.MOTvalidation = "MOT17"
     # ------------------------------------------------------------------------------------------------------------------
 
     # There was no preconception of what to do  -cit.
-    classification = args.classification
+    classification = not args.regression
 
     # %% Set up parameters
 
@@ -357,7 +358,7 @@ if __name__ == '__main__':
             if classification:
                 raise Exception(
                     "Huber loss should not be used in a classification setting, please choose a different one")
-        case 'bce' | 'mae' | 'mse':
+        case 'bce' | 'mae' | 'mse' | 'dice':
             loss_function = IMPLEMENTED_LOSSES[loss_type]()
         case 'focal':
             loss_function = IMPLEMENTED_LOSSES[loss_type](alpha=alpha, gamma=gamma, device=device)
@@ -454,7 +455,6 @@ if __name__ == '__main__':
                                  mps_fallback=mps_fallback,
                                  alpha=alpha,
                                  gamma=gamma,
-                                 reduction=reduction,
                                  classification=classification)
 
     print("\n[INFO] Final train loss: " + str(train_loss))

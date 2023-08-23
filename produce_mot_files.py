@@ -31,7 +31,7 @@ parser.add_argument('-m','--model', default="models_to_try/edge-predictor_node-m
                         help="model to load")
 parser.add_argument('-b','--backbone', default="efficientnet_v2_l",
                         help="backbone to load")
-parser.add_argument('-c','--classification', action='store_true')
+parser.add_argument('-r','--regression', action='store_true')
 parser.add_argument('-v','--validation_only', action='store_true')
 parser.add_argument('--mot', default='17')
 

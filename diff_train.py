@@ -133,7 +133,9 @@ def train(model,
             f'[TQDM] Epoch #{epoch + 1} - {avg_train_loss_msg}{avg_val_loss_msg}{val_accs_msg}')
 
         """ Validation """
-
+        # validate and save every 10 epochs
+        if not epoch % 10 == 0:
+            continue
         val_loss, acc_ones, acc_zeros, zeros_as_ones, ones_as_zeros = validation(model=model,
                                                                                  val_loader=val_loader,
                                                                                  loss_function=loss_function,

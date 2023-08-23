@@ -9,8 +9,8 @@ import numpy as np
 import torch
 from torch import nn
 from torch.nn import HuberLoss, BCEWithLogitsLoss, MSELoss, L1Loss
+from torchgeometry.losses import DiceLoss
 from torch_geometric.utils import to_networkx
-from torchvision.ops import sigmoid_focal_loss
 import torch.nn.functional as F
 
 
@@ -201,6 +201,7 @@ IMPLEMENTED_LOSSES = {
     'focal': SigmoidFocalLoss,
     'mae': L1Loss,
     'mse': MSELoss,
+    'dice': DiceLoss,
     'berhu': None,
 }
 
@@ -211,7 +212,7 @@ LINKAGE_TYPE_ALL = -1
 LINKAGE_TYPE_ADJACENT = 0
 EPSILON = 0.0001  # Used to avoid infinity
 
-MOT20_VALIDATION_TRACKS = {'MOT20-01':True,'MOT20-02':True} # dictionary for having a faster check access
+MOT20_VALIDATION_TRACKS = {} # {'MOT20-01':True,'MOT20-02':True} # dictionary for having a faster check access
 MOT17_VALIDATION_TRACKS = {'MOT17-02-SDP':True,
                            'MOT17-02-FRCNN':True,
                            'MOT17-02-DPM':True,

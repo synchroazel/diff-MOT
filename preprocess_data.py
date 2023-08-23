@@ -21,10 +21,6 @@ from utilities import *
 
 
 
-
-
-
-
 # todo: cli args
 parser = argparse.ArgumentParser(
     prog='python train.py',
@@ -33,24 +29,35 @@ parser = argparse.ArgumentParser(
     formatter_class=argparse.RawTextHelpFormatter)
 
 parser.add_argument('-m', '--mot', default="MOT17", type=str)
-parser.add_argument('--classification', action='store_true')
+parser.add_argument('--regression', action='store_true')
+parser.add_argument('--detector', action='store_true')
+parser.add_argument('--submission', action='store_true')
 parser.add_argument('--backbone',  default="efficientnet_v2_l", type=str)
 
 args = parser.parse_args()
 
+# TODO: remove
+#
+args.submission = True
+#
+
+
+split = 'test' if args.submission else "train"
+det_folder = 'det' if (args.submission or args.detector )else "gt"
+det_file = 'det.txt' if (args.submission or args.detector ) else "gt.txt"
 
 
 dataset = args.mot
-classification = args.classification
+classification = not args.regression
 backbone = args.backbone
 
 data_loader = MotDataset(dataset_path="/media/dmmp/vid+backup/Data/" + dataset,
-                         split="train",
+                         split=split,
                          subtrack_len=15,
                          slide=10,
                          linkage_window=5,
-                         detections_file_folder="gt",
-                         detections_file_name="gt.txt",
+                         detections_file_folder=det_folder,
+                         detections_file_name=det_file,
                          dl_mode=True,
                          preprocessing=True,
                          preprocessed=False,

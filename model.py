@@ -52,7 +52,6 @@ class ImgEncoder(torch.nn.Module):
         'vgg16': 4096,
         'vgg19': 4096,
         'efficientnet_v2_l': 1280,
-        # 'efficientnet-b7':2560
     }
     image_size = {
         'resnet50': None,
