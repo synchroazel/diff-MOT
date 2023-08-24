@@ -165,20 +165,17 @@ def build_graph(linkage_window: int,
     graph.edge_attr = edge_attributes
 
     # Build `y` tensor to compare predictions with gt
-    try:
-        weight_potencies = list(gt_dict.keys())
+    weight_potencies = list(gt_dict.keys())
 
-        if gt_dict is not None:
-            y = torch.zeros(len(graph.edge_attr)).to(device=device, dtype=dtype)
-            for i, x in enumerate(graph.edge_index.t().tolist()):
-                for potency in weight_potencies:
-                    gt_list = gt_dict[potency]
-                    if x in gt_list:
-                        y[i] = 1 / int(potency)
-                        break
-            graph.y = y
-    except AttributeError:
-        pass # we were reading detection files
+    if gt_dict is not None:
+        y = torch.zeros(len(graph.edge_attr)).to(device=device, dtype=dtype)
+        for i, x in enumerate(graph.edge_index.t().tolist()):
+            for potency in weight_potencies:
+                gt_list = gt_dict[potency]
+                if x in gt_list:
+                    y[i] = 1 / int(potency)
+                    break
+        graph.y = y
 
     return graph
 
@@ -268,8 +265,7 @@ class MotTrack:
 
             image = Image.open(os.path.normpath(image))  # all image detections in the current frame
 
-            if len(self.detections[i]) == 0:
-                continue
+
             for detection in self.detections[i]:
                 nodes += 1
 
@@ -485,15 +481,15 @@ class MotDataset(Dataset):
         self.end_frame = self.str_frame + self.subtrack_len
 
     @staticmethod
-    def _read_detections(det_file, starting_frame:int, ending_frame:int, untrusty_detector_format = False) -> dict:
+    def _read_detections(det_file, starting_frame:int, ending_frame:int) -> dict:
         """Read detections into a dictionary"""
 
         file = np.loadtxt(det_file, delimiter=",")
 
         detections = {}
         for det in file:
-            # TODOç check for exclusion flag
-            if (not untrusty_detector_format) and det[6] <= 0.2:
+            # check for exclusion flag
+            if det[6] <= 0.5:
                 continue
             frame = int(det[0])
             if not (frame > starting_frame and frame <= ending_frame):
@@ -527,14 +523,12 @@ class MotDataset(Dataset):
                 tracklet_graph = pickle.load(f)
             return tracklet_graph
 
-        # TODO
-        lack_of_trust = self.detections_file_folder == "det"# (self.name == "MOT20" and self.detections_file_folder == "det")
 
         track = self.tracklist[cur_track]
         track_path = os.path.join(self.dataset_dir, self.split, track)
         detections_file = os.path.normpath(
             os.path.join(track_path, self.detections_file_folder, self.detections_file_name))
-        detections = self._read_detections(detections_file, starting_frame, ending_frame, untrusty_detector_format=lack_of_trust)
+        detections = self._read_detections(detections_file, starting_frame, ending_frame)
         detections = [detections[frame] for frame in sorted(detections.keys())]
 
         track_path = os.path.join(self.dataset_dir, self.split, track)

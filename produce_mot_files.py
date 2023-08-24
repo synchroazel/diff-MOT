@@ -46,7 +46,7 @@ args = parser.parse_args()
 # todo: cliargs
 outpath = args.outpath
 model = load_model_pkl(args.model, device=device)
-classification = args.classification
+classification = not args.regression
 validation = args.validation_only
 mot = args.mot
 backbone = args.backbone

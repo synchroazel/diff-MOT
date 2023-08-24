@@ -38,7 +38,7 @@ args = parser.parse_args()
 
 # TODO: remove
 #
-args.submission = True
+# args.submission = True
 #
 
 
