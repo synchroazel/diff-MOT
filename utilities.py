@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import pickle
+from tqdm import tqdm
 
 import networkx as nx
 import numpy as np
@@ -144,7 +145,7 @@ def save_model(model: torch.nn.Module,
         model.to(torch.device('mps'))
 
 
-def load_model_pkl(pkl_path, device='cpu'):
+def custom_load_pkl(pkl_path, device='cpu'):
     class CustomUnpickler(pickle.Unpickler):  # this is necessary to deal with MPS
         def find_class(self, module, name):
             if module == 'torch.storage' and name == '_load_from_bytes':
@@ -181,6 +182,11 @@ def shuffle_tensor(tensor):
     return t
 
 
+def check_sanity(dataloader):
+    for _ in tqdm(dataloader, desc="[TQDM] Verifying dataloader sanity", leave=True):
+        pass
+
+
 # TODO: add more?
 AVAILABLE_OPTIMIZERS = {
     'AdamW': torch.optim.AdamW,
@@ -212,14 +218,14 @@ LINKAGE_TYPE_ALL = -1
 LINKAGE_TYPE_ADJACENT = 0
 EPSILON = 0.0001  # Used to avoid infinity
 
-MOT20_VALIDATION_TRACKS = {'MOT20-01':True,'MOT20-02':True} # dictionary for having a faster check access
-MOT17_VALIDATION_TRACKS = {'MOT17-02-SDP':True,
-                           'MOT17-02-FRCNN':True,
-                           'MOT17-02-DPM':True,
-                           'MOT17-09-DPM':True,
-                           'MOT17-09-SDP':True,
-                           'MOT17-09-FRCNN':True,
-                           'MOT17-13-DPM':True,
-                           'MOT17-13-FRCNN':True,
-                           'MOT17-13-SDP':True,
+MOT20_VALIDATION_TRACKS = {'MOT20-01': True, 'MOT20-02': True}  # dictionary for having a faster check access
+MOT17_VALIDATION_TRACKS = {'MOT17-02-SDP': True,
+                           'MOT17-02-FRCNN': True,
+                           'MOT17-02-DPM': True,
+                           'MOT17-09-DPM': True,
+                           'MOT17-09-SDP': True,
+                           'MOT17-09-FRCNN': True,
+                           'MOT17-13-DPM': True,
+                           'MOT17-13-FRCNN': True,
+                           'MOT17-13-SDP': True,
                            }

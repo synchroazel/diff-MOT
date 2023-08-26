@@ -242,7 +242,7 @@ if __name__ == '__main__':
     # %% Load the model
 
     model_path = os.path.normpath(os.path.join(saves_path, model_pkl))
-    model = load_model_pkl(model_path, device=device).to(device)
+    model = custom_load_pkl(model_path, device=device).to(device)
     model.mps_fallback = mps_fallback
     model.eval()
 

@@ -28,16 +28,3 @@ if __name__ == '__main__':
                    data_path=args.data_path,
                    tracker_sub_folder=args.tracker_sub_folder,
                    output_sub_folder=args.output_path)
-
-    # Assume you have something like this in the root of the project:
-    # trackers/
-    #   exp1/
-    #     MOT17-02-DPM.txt
-
-    # Esempio funzionante:
-    #
-    # evaluate_mot17(tracker_path="trackers",
-    #                split="MOT17-prova",
-    #                data_path="data",
-    #                tracker_sub_folder="exp1",
-    #                output_sub_folder="boh2")

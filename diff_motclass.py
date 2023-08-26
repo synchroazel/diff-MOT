@@ -1,11 +1,6 @@
-"""
-Set of classes used to deal with datasets and tracks.
-"""
-import torch
 import torch_geometric.data as pyg_data
 from PIL import Image
 from torch.utils.data import Dataset
-from torch_geometric.transforms import KNNGraph
 from torchvision import transforms
 from torchvision.ops import box_convert
 from tqdm import tqdm
@@ -36,7 +31,7 @@ def build_graph(linkage_window: int,
                 device: torch.device,
                 dtype: torch.dtype = torch.float32,
                 mps_fallback: bool = False,
-                mot_name:str = 'MOT17') -> pyg_data.Data:
+                mot_name: str = 'MOT17') -> pyg_data.Data:
     """
     This function's purpose is to process the output of `track.get_data()` to build an appropriate graph.
 
@@ -72,33 +67,11 @@ def build_graph(linkage_window: int,
         detections_coords=detections_coords,
         num_nodes=number_of_nodes,
         edge_attr=None,
-        # pos=feature_differences,
         pos=distance_matrix,
         times=frame_times
     )
 
-    # kNN edge pruning
-    # if knn_pruning_args is not None:
-##
-    #     if mps_fallback:
-    #         graph = graph.to('cpu')
-##
-    #     knn_morpher = KNNGraph(loop=False, force_undirected=True, **knn_pruning_args)
-    #     graph = knn_morpher(graph)
-##
-    #     # knn graph is somehow not respecting the original edges,
-    #     if mps_fallback:
-    #         graph = graph.to('mps')
-#
-    # directed graph
     graph.edge_index = torch.combinations(torch.tensor(range(0, number_of_nodes))).t().to(device=device)
-
-    # # remove duplicates and make graph true undirected
-    # sources, targets = graph.edge_index
-    # mask = sources < targets
-    # graph.edge_index = graph.edge_index[:, mask]
-
-    # linkage
 
     # time mask
     sources, targets = graph.edge_index
@@ -108,15 +81,14 @@ def build_graph(linkage_window: int,
         linkage_window = torch.inf
     elif linkage_window == 0:
         linkage_window = 1
+
     mask = (time_distances < linkage_window) & (time_distances != 0)
     graph.edge_index = graph.edge_index[:, mask]
 
-
-
-    # naive pr
+    # Naive pruning
     sources, targets = graph.edge_index
-    # time_distances = time_distances[mask]
-    space_distances = distance_matrix[sources,targets]
+
+    space_distances = distance_matrix[sources, targets]
 
     if mot_name == 'MOT17':
         THRESHOLD = 100
@@ -128,36 +100,23 @@ def build_graph(linkage_window: int,
     graph.edge_index = graph.edge_index[:, mask]
     pass
 
-    # graph.edge_index = shuffle_tensor(graph.edge_index.t()).t()
-    # assert knn didn't delete gt
-    # gt_adjacency_set = set([tuple(x) for x in gt_dict['1']])
-    # # # assert no ground truth has been lost
-    # test_list = graph.edge_index.t().tolist()
-    # test = [list(a) in test_list for a in gt_adjacency_set]
-    # # assert all(a is True for a in test)
-    # if not all(a is True for a in test):
-    #     print("AAAAAAAAAAAAAAAAa")
-    # del test, test_list
-
-
-    # # once the graph is pruned, compute edge attributes
+    # Once the graph is pruned, compute edge attributes
     edge_attributes = torch.zeros(graph.edge_index.shape[1], EDGE_FEATURES_DIM).to(device)
 
     # Extract source and target nodes for each edge
     sources, targets = graph.edge_index
 
-    # avoid infinity with EPSILON
-
     # Compute x, y, h, w, and t attributes for each edge using tensor operations
-    edge_attributes[:, 0] = (2 * (detections_coords[targets, 0] - detections_coords[sources, 0])) / ((
-            detections_coords[sources, 2] + detections_coords[targets, 2]) + EPSILON)
+    edge_attributes[:, 0] = (2 * (detections_coords[targets, 0] - detections_coords[sources, 0])) / (
+        (detections_coords[sources, 2] + detections_coords[targets, 2]) + EPSILON)
     edge_attributes[:, 1] = (2 * (detections_coords[sources, 1] - detections_coords[targets, 1])) / (
         (detections_coords[sources, 3] + detections_coords[targets, 3]) + EPSILON)
+
     edge_attributes[:, 2] = torch.log(
-        (detections_coords[sources, 2] / (detections_coords[targets, 2]+ EPSILON)).abs()
+        (detections_coords[sources, 2] / (detections_coords[targets, 2] + EPSILON)).abs()
     )
     edge_attributes[:, 3] = torch.log(
-        (detections_coords[sources, 3] / (detections_coords[targets, 3]+ EPSILON)).abs()
+        (detections_coords[sources, 3] / (detections_coords[targets, 3] + EPSILON)).abs()
     )
     edge_attributes[:, 4] = (frame_times[targets] - frame_times[sources]).squeeze() / (frame_times[-1] + EPSILON)
     edge_attributes[:, 5] = 1 / (distance_matrix[sources, targets] + EPSILON)
@@ -194,7 +153,7 @@ class MotTrack:
                  logging_lv: int = logging.INFO,
                  name: str = "track",
                  classification=False,
-                 backbone:str = 'resnet50'):
+                 backbone: str = 'resnet50'):
 
         # Set logging level
         logging.getLogger().setLevel(logging_lv)
@@ -213,7 +172,6 @@ class MotTrack:
         self.classification = classification
         self._backbone_str = backbone
         self.backbone = ImgEncoder(model_name=backbone, dtype=dtype).to(device=device)
-
 
         logging.info(f"{self.n_frames} frames")
 
@@ -249,7 +207,8 @@ class MotTrack:
 
         number_of_detections = sum([len(x) for x in self.detections])
 
-        self.det_resize = self.det_resize if self.backbone.image_size[self._backbone_str] is None else self.backbone.image_size[self._backbone_str]
+        self.det_resize = self.det_resize if self.backbone.image_size[self._backbone_str] is None else \
+            self.backbone.image_size[self._backbone_str]
 
         track_detections_coords = torch.zeros((number_of_detections, 4), dtype=self.dtype).to(self.device)
         frame_times = torch.zeros((number_of_detections, 1), dtype=torch.int16).to(self.device)
@@ -265,12 +224,10 @@ class MotTrack:
 
             image = Image.open(os.path.normpath(image))  # all image detections in the current frame
 
-
             for detection in self.detections[i]:
                 nodes += 1
 
                 bbox = box_convert(torch.tensor(detection['bbox']), "xywh", "xyxy").tolist()
-
 
                 detection = image.crop(bbox)
                 detection = detection.resize(self.det_resize)
@@ -287,7 +244,6 @@ class MotTrack:
             i += 1
         with torch.no_grad():
             node_features = self.backbone(image_container)
-
 
         """
         Node linkage - ground truth
@@ -322,10 +278,9 @@ class MotTrack:
                 # all_paths wll be a list of lists, each list containing the detections ids of a gt trajectory
                 all_paths.append(cur_path)
 
-            # build ground truth dict
+            # Build ground truth dict
 
             gt_dict = dict()
-
 
             if self.classification:
                 gt_dict['1'] = []
@@ -333,19 +288,20 @@ class MotTrack:
                     for j in range(len(path) - 1):
                         try:
                             gt_dict['1'].append([path[j], path[j + 1]])
-                            # gt_adjacency_list.append([path[j + 1], path[j]]) # -------------------------------------------------
+                            # gt_adjacency_list.append([path[j + 1], path[j]]) # ------- !
                         except:
                             continue
             else:
                 for i in range(1, self.linkage_window + 1):
                     gt_dict[str(i)] = []
+
                 # Fill gt_adjacency_list using the detections in all_paths
                 for i in range(1, self.linkage_window + 1):
                     for path in all_paths:
                         for j in range(len(path) - 1):
                             try:
                                 gt_dict[str(i)].append([path[j], path[j + i]])
-                                # gt_adjacency_list.append([path[i + 1], path[i]]) # -------------------------------------------------
+                                # gt_adjacency_list.append([path[i + 1], path[i]]) # ------- !
                             except:
                                 continue
 
@@ -362,7 +318,7 @@ class MotTrack:
         return {
             # "adjacency_list": adjacency_list,
             # 'n_nodes':self.n_nodes,
-            'linkage_window':self.linkage_window,
+            'linkage_window': self.linkage_window,
             "gt_dict": gt_dict,
             "detections": node_features,
             "frame_times": frame_times,
@@ -391,7 +347,7 @@ class MotDataset(Dataset):
                  preprocessing: bool = False,
                  preprocessed: bool = True,
                  preprocessed_data_folder: str = 'preprocessed_data',
-                 feature_extraction_backbone:str = "resnet50"
+                 feature_extraction_backbone: str = "resnet50"
                  ):
         self.dataset_dir = dataset_path
         self.split = split
@@ -427,7 +383,6 @@ class MotDataset(Dataset):
         if self.preprocessing and self.preprocessed:
             raise Exception("Data loader cannot be in both preprocessing and preprocessed mode")
 
-
         # Get tracklist from the split specified
         assert split in os.listdir(self.dataset_dir), \
             f"Split must be one of {os.listdir(self.dataset_dir)}."
@@ -445,7 +400,7 @@ class MotDataset(Dataset):
         operation = "classification" if self.classification else "regression"
         path = os.path.normpath(
             os.path.join(
-                self.preprocessed_data_folder, operation, self.name,self.backbone,
+                self.preprocessed_data_folder, operation, self.name, self.backbone,
                 self.tracklist[self.cur_track]
             )
         )
@@ -481,7 +436,7 @@ class MotDataset(Dataset):
         self.end_frame = self.str_frame + self.subtrack_len
 
     @staticmethod
-    def _read_detections(det_file, starting_frame:int, ending_frame:int) -> dict:
+    def _read_detections(det_file, starting_frame: int, ending_frame: int) -> dict:
         """Read detections into a dictionary"""
 
         file = np.loadtxt(det_file, delimiter=",")
@@ -519,10 +474,8 @@ class MotDataset(Dataset):
 
         if self.preprocessed:
             load_path = self._build_preprocess_path(idx)
-            with open(load_path, 'rb') as f:
-                tracklet_graph = pickle.load(f)
+            tracklet_graph = custom_load_pkl(load_path)
             return tracklet_graph
-
 
         track = self.tracklist[cur_track]
         track_path = os.path.join(self.dataset_dir, self.split, track)
@@ -538,15 +491,6 @@ class MotDataset(Dataset):
         if self.frames_per_track[cur_track] - starting_frame < 15:
             ending_frame = starting_frame + (self.frames_per_track[cur_track] - starting_frame)
 
-        # logging.debug(f"From {starting_frame} to {ending_frame}")
-        # logging.debug(f"Starting in track: {cur_track}")
-        # logging.debug(f"From {starting_frame} to {ending_frame} of track {cur_track}")
-#
-        # frames_window_msg = f"frames {starting_frame}-{ending_frame}/{len(all_images[cur_track])}"
-#
-        # logging.info(
-        #     f"Subtrack #{idx} | track {self.tracklist[cur_track]} {frames_window_msg}\r")
-#
         track = MotTrack(detections=detections,
                          images_list=images_list[starting_frame:ending_frame],
                          det_resize=self.det_resize,
@@ -569,10 +513,12 @@ class MotDataset(Dataset):
             if self.preprocessing:
                 save_path = self._build_preprocess_path(idx)
                 with open(save_path, "wb") as f:
-                    pickle.dump(graph, f)
+                    if self.mps_fallback:
+                        pickle.dump(graph.to("cpu"), f)
+                    else:
+                        pickle.dump(graph, f)
                     return None
             else:
                 return graph
         else:
             return track
-
