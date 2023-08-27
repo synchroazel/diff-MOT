@@ -21,7 +21,7 @@ Mambaforge-Linux-x86_64.sh
 *.pkl
 
 README_.md
-data/**
+data/
 .idea/
 saves/*
 videos/*
