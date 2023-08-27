@@ -191,11 +191,11 @@ parser.add_argument('-m', '--MOTtrain', default="MOT17",
 parser.add_argument('-M', '--MOTvalidation', default="MOT17",
                     help="MOT dataset on which the single validate is calculated.")
 
-parser.add_argument('-N', '--message-layer-nodes', default="base",
-                    help="Type of message passing layer for nodes (NODE MODEL)."
+parser.add_argument('-N', '--mp-arch', default="base",
+                    help="Type of message passing architecture."
                          "NB: all layers are time aware"
                          "Available structures:\n"
-                         "- base (layer proposed on Neural Solver),\n"
+                         "- timeaware (layer proposed on Neural Solver),\n"
                          "- attention (GATv2Conv),\n"
                          "- transformer")
 
@@ -286,7 +286,7 @@ val_preprocessed = args.val_preprocessed
 
 # Hyperparameters
 backbone = args.backbone
-layer_type = args.message_layer_nodes
+layer_type = args.mp_arch
 subtrack_len = args.subtrack_len
 slide = args.slide
 linkage_window = args.linkage_window
@@ -333,7 +333,7 @@ match loss_type:
 
 # %% Initialize the Diffusion model and the GNN backbone
 
-network_dict = IMPLEMENTED_MODELS[args.model]
+network_dict = IMPLEMENTED_MODELS[args.mp_arch]
 
 gnn = Net(
     layer_tipe=layer_type,
