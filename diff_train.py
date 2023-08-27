@@ -29,6 +29,7 @@ def validation(model,
 def train(model,
           train_loader,
           val_loader,
+          n_vals,
           loss_function,
           optimizer,
           epochs,
@@ -133,7 +134,8 @@ def train(model,
 
         """ Validation """
 
-        if not (epoch + 1) % 20 == 0:
+        # Only validate n_vals times throughout the training
+        if not epoch % (epochs//n_vals) == 0:
             continue
 
         save_model(model,
@@ -265,6 +267,10 @@ parser.add_argument('--train-preprocessed', action='store_true', default=True,
 parser.add_argument('--val-preprocessed', action='store_true', default=True,
                     help="Whether to use preprocessed features for val dataloader.")
 
+parser.add_argument('--n-vals', default=3, type=int,
+                    help="Number of validation steps to execute during training."
+                         "(Validation can be quite expensive, and the model learns slow)")
+
 args = parser.parse_args()
 
 classification = True  # in the Diffusion scenario should always be True
@@ -279,6 +285,7 @@ detections_file_name = args.detection_gt_file
 # MOT to use
 mot_train = args.MOTtrain
 mot_val = args.MOTvalidation
+n_vals = args.n_vals
 
 # Preprocessed features
 train_preprocessed = args.train_preprocessed
@@ -419,4 +426,4 @@ print("")
 
 # %% Train the model
 
-train(model, mot_train_dl, mot_val_dl, loss_function, optimizer, epochs, device, mps_fallback)
+train(model, mot_train_dl, mot_val_dl, n_vals, loss_function, optimizer, epochs, device, mps_fallback)
