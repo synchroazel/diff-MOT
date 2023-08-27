@@ -133,9 +133,19 @@ def train(model,
 
         """ Validation """
 
-        # Validate and save every 10 epochs
-        if not epoch % 10 == 0:
+        if not (epoch + 1) % 20 == 0:
             continue
+
+        save_model(model,
+                   mps_fallback=mps_fallback,
+                   classification=classification,
+                   epoch=epoch,
+                   epoch_info=epoch_info,
+                   node_model_name=model.model.model_dict['node_name'],
+                   edge_model_name=model.model.model_dict['edge_name'],
+                   savepath_adds={'tr': mot_train, 'val': mot_val}
+                   )
+
         val_loss, acc_ones, acc_zeros, zeros_as_ones, ones_as_zeros = validation(model=model,
                                                                                  val_loader=val_loader,
                                                                                  loss_function=loss_function,
@@ -155,17 +165,6 @@ def train(model,
 
         pbar_ep.set_description(
             f'[TQDM] Epoch #{epoch + 1} - {avg_train_loss_msg}{avg_val_loss_msg}{val_accs_msg}')
-
-        save_model(model,
-                   mps_fallback=mps_fallback,
-                   classification=classification,
-                   epoch=epoch,
-                   epoch_info=epoch_info,
-                   node_model_name=model.model.model_dict['node_name'],
-                   edge_model_name=model.model.model_dict['edge_name'],
-                   savepath_adds={'trained_on': mot_train,
-                                  "CIRO": 'DIFFUSION'}  # TODO: remove
-                   )
 
 
 # %% CLI args parser
@@ -332,16 +331,7 @@ match loss_type:
             "The chosen loss: " + loss_type + " has not been implemented yet."
                                               "To see the available ones, run this script with the -h option")
 
-# %% DEBUGGING ARGS SECTION %% # -------------- !!
-
-args.mps_fallback = True
-args.diff_steps = 100
-args.message_layer_nodes = "timeaware"
-args.epochs = 100
-
 # %% Initialize the Diffusion model and the GNN backbone
-
-args.model = "timeaware"
 
 network_dict = IMPLEMENTED_MODELS[args.model]
 
@@ -405,8 +395,8 @@ mot_val_dl = MotDataset(dataset_path=val_dataset_path,
                         feature_extraction_backbone=backbone)
 
 # Check stored embeddings integrity
-check_sanity(mot_train_dl)
-check_sanity(mot_val_dl)
+# check_sanity(mot_train_dl)
+# check_sanity(mot_val_dl)
 
 # Print information
 print("[INFO] Hyperparameters and info:")

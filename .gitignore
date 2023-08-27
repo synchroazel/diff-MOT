@@ -18,6 +18,7 @@ singularity/*.o*
 Mambaforge-Linux-x86_64.sh
 *.zip
 *.tar
+*.pkl
 
 README_.md
 data/**
