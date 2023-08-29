@@ -3,6 +3,8 @@ import warnings
 from torch_geometric.transforms import ToDevice
 from tqdm import tqdm
 
+from torchvision.ops import sigmoid_focal_loss
+
 from utilities import *
 
 warnings.filterwarnings("ignore")
@@ -55,7 +57,7 @@ def test(model,
                                                    node_feats=data.detections,
                                                    edge_index=edge_index)
 
-            pred_edges = torch.where(pred_edges_oh[:, 1] > pred_edges_oh[:, 0], 1., 0.)
+            pred_edges = torch.where(pred_edges_oh[:, 1] > pred_edges_oh[:, 0], 0., 1.)
 
             val_loss = loss_function(data.y, pred_edges)
 

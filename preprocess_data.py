@@ -10,8 +10,6 @@ parser = argparse.ArgumentParser()
 parser.add_argument('-D', '--datapath', default="data", type=str)  # TODO: remove default
 parser.add_argument('-m', '--mot', default="MOT17", type=str)
 parser.add_argument('--regression', action='store_true')
-parser.add_argument('--detector', action='store_true')
-parser.add_argument('--submission', action='store_true')
 parser.add_argument('--backbone', default="efficientnet_v2_l", type=str)
 parser.add_argument('--split', default='train', type=str)
 parser.add_argument('--detections', default="gt", type=str)
@@ -29,7 +27,7 @@ split = args.split
 det_folder = args.detections
 det_file = args.detections + ".txt"
 
-dataloader = MotDataset(dataset_path=os.join(datapath, dataset),
+dataloader = MotDataset(dataset_path=os.path.join(datapath, dataset),
                         split=split,
                         subtrack_len=15,
                         slide=10,

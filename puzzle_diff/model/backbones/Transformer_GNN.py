@@ -39,6 +39,11 @@ class Transformer_GNN(nn.Module):
         x = nn.functional.gelu(x)
         x = self.module_list[3](x=x, edge_index=edge_index)
 
-        x = nn.Linear(x.shape[1], self.output_size)(x)
+        # TODO: sistemare sta cafonata below
+
+        try:
+            x = nn.Linear(x.shape[1], self.output_size).to('cuda')(x)
+        except:
+            x = nn.Linear(x.shape[1], self.output_size)(x)
 
         return x

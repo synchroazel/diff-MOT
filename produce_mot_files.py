@@ -42,15 +42,21 @@ parser.add_argument('--detection_folder', default="gt",
 parser.add_argument('--detection_file', default="gt.txt",
                     help="detection ground truth folder.")
 
+parser.add_argument('--diff-steps', type=int,
+                    help="number of steps for the diff.")
+
 args = parser.parse_args()
 
 datapath = args.datapath
-outpath = args.outpath
+outpath = os.path.join(args.outpath, args.experiment)
 model = custom_load_pkl(args.model, device=device)
 classification = not args.regression
 validation = args.validation_only
 mot = args.mot
 backbone = args.backbone
+
+if args.diff_steps is not None:
+    model.steps = args.diff_steps
 
 folder = args.detection_folder
 file = args.detection_file
@@ -239,7 +245,7 @@ for _, data in tqdm(enumerate(data_loader), desc='[TQDM] Converting tracklet',
 
     if cur_track_idx != previous_track_idx and cur_track_idx != 0:
         cur_track_name = data_loader.tracklist[previous_track_idx]
-        final_df.sort_values(by=['id', 'frame']).drop_duplicates().to_csv(outpath + cur_track_name + ".txt",
+        final_df.sort_values(by=['id', 'frame']).drop_duplicates().to_csv(outpath + "/" + cur_track_name + ".txt",
                                                                           index=False, header=False)
         previous_track_idx += 1
         # Reset values
@@ -258,15 +264,31 @@ for _, data in tqdm(enumerate(data_loader), desc='[TQDM] Converting tracklet',
                                              'z'])
 
     if validation_only and (
-        (cur_track_name not in MOT17_VALIDATION_TRACKS) and (cur_track_name not in MOT20_VALIDATION_TRACKS)):
+            (cur_track_name not in MOT17_VALIDATION_TRACKS) and (cur_track_name not in MOT20_VALIDATION_TRACKS)):
         continue
 
     data = ToDevice(device.type)(data)
-    preds = model(data)
+
+    gt_edges = data.y
+
+    oh_y = torch.nn.functional.one_hot(gt_edges.to(torch.int64), -1)
+    edge_attr = data.edge_attr
+    edge_index = data.edge_index
+
+    with torch.no_grad():
+        _, pred_edges_oh = model.p_sample_loop(shape=(oh_y.shape[0], 2),
+                                               edge_feats=edge_attr,
+                                               node_feats=data.detections,
+                                               edge_index=edge_index)
+
+    preds = torch.where(pred_edges_oh[:, 1] > pred_edges_oh[:, 0], 1., 0.)
+
     build_trajectories(data, preds=preds, classification=classification)
+
     track_frame += data_loader.slide
 
 cur_track_name = data_loader.tracklist[cur_track_idx]
-final_df.sort_values(by=['id', 'frame']).drop_duplicates().to_csv(outpath + cur_track_name + ".txt",
+
+final_df.sort_values(by=['id', 'frame']).drop_duplicates().to_csv(outpath + "/" + cur_track_name + ".txt",
                                                                   index=False,
                                                                   header=False)

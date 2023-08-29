@@ -2,6 +2,7 @@ import enum
 import math
 from functools import partial
 from pathlib import Path
+from torchvision.ops import sigmoid_focal_loss
 from typing import Any
 
 import PIL
@@ -24,6 +25,24 @@ from transformers.optimization import Adafactor
 from .backbones import Eff_GAT
 
 matplotlib.use("agg")
+
+
+class SigmoidFocalLoss(nn.Module):
+    "Non weighted version of Focal Loss"
+
+    def __init__(self, alpha=.25, gamma=2, device='cuda'):
+        super(SigmoidFocalLoss, self).__init__()
+        self.alpha = torch.tensor([alpha, 1 - alpha]).to(device)
+        self.gamma = gamma
+
+    def forward(self, inputs, targets):
+        BCE_loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction='none')
+        targets = targets.type(torch.long)
+        at = self.alpha.gather(0, targets.data.view(-1))
+        pt = torch.exp(-BCE_loss)
+        F_loss = at * (1 - pt) ** self.gamma * BCE_loss
+        return F_loss.mean()
+
 
 
 class ModelMeanType(enum.Enum):
@@ -378,6 +397,7 @@ class GNN_Diffusion(pl.LightningModule):
         noise=None,
         node_feats=None,
         loss_type="l1",
+        loss_args = None,
         cond=None,
         edge_index=None,
         batch=None,
@@ -424,13 +444,13 @@ class GNN_Diffusion(pl.LightningModule):
             loss = F.mse_loss(target, prediction)
         elif loss_type == "huber":
             loss = F.smooth_l1_loss(target, prediction)
+        elif loss_type == "focal":
+            loss_fun = SigmoidFocalLoss(alpha=0.05, gamma=3.)
+            loss = loss_fun(prediction.mean(1), target.mean(1))
         else:
             raise NotImplementedError()
 
-        if also_preds:
-            return loss, prediction
-        else:
-            return loss
+        return loss
 
     @torch.no_grad()
     def p_sample_ddpm(self,

@@ -4,27 +4,27 @@ import argparse
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--tracker_path', type=str, default='trackers',
+    parser.add_argument('--trackers-path', type=str, default='trackers',
                         help='Path to the folder containing all trackers.')
 
-    parser.add_argument('--split', type=str, default='MOT17-validation',
+    parser.add_argument('-s', '--split', type=str,
                         help='The name of the seqmap containing the list of tracks to evaluate.\n'
                              'All seqmaps for MOTX are assumed to be in MOTX/seqmaps.')
 
-    parser.add_argument('--data_path', type=str, default='/media/dmmp/vid+backup/Data',
+    parser.add_argument('--datapath', type=str, default='data',  # TODO remove default
                         help='Path to the folder containing all datasets.')
 
-    parser.add_argument('--output_path', type=str, default='output',
+    parser.add_argument('--output-path', type=str, default='output',
                         help='Path to the folder where the results will be saved.')
 
     # Not really sure of its role
-    parser.add_argument('--tracker_sub_folder', type=str, default='exp_timeaware_nodes_classification_17',
+    parser.add_argument('-e', '--experiment', type=str,
                         help='Subfolder of tracker_path where the tracker files are located.')
 
     args = parser.parse_args()
 
-    evaluate_mot17(tracker_path=args.tracker_path,
+    evaluate_mot17(tracker_path=args.trackers_path,
                    split=args.split,
-                   data_path=args.data_path,
-                   tracker_sub_folder=args.tracker_sub_folder,
+                   data_path=args.datapath,
+                   tracker_sub_folder=args.experiment,
                    output_sub_folder=args.output_path)

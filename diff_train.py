@@ -2,13 +2,13 @@ import argparse
 import warnings
 
 from torch_geometric.transforms import ToDevice
+from torchvision.ops import sigmoid_focal_loss
 
 from diff_model import *
 from diff_motclass import MotDataset
 from diff_test import test
 from puzzle_diff.model.spatial_diffusion import *
 from utilities import *
-from utilities import get_best_device
 
 warnings.filterwarnings("ignore")
 
@@ -102,10 +102,10 @@ def train(model,
             train_loss = model.p_losses(
                 x_start=oh_y,
                 t=time,
-                loss_type="huber",
+                loss_type=loss_type,
                 node_feats=data.detections,
                 edge_index=edge_index,
-                edge_feats=edge_attr
+                edge_feats=edge_attr,
             )
 
             # Backward and optimize
@@ -113,7 +113,7 @@ def train(model,
             train_loss.backward()
             optimizer.step()
 
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 100)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=20, error_if_nonfinite=True)
 
             pbar_dl.update(1)
 
@@ -123,7 +123,7 @@ def train(model,
 
             epoch_info['avg_train_losses'].append(average_train_loss)
 
-            avg_train_loss_msg = f'avg.Tr.Loss: {average_train_loss:.4f} (last: {train_loss:.4f})'
+            avg_train_loss_msg = f'avg.Tr.Loss: {average_train_loss:.6f} (last: {train_loss:.6f})'
 
             pbar_ep.set_description(f'[TQDM] Epoch #{epoch + 1} - {avg_train_loss_msg}{avg_val_loss_msg}{val_accs_msg}')
 
@@ -143,8 +143,8 @@ def train(model,
                    classification=classification,
                    epoch=epoch,
                    epoch_info=epoch_info,
-                   node_model_name=model.model.model_dict['node_name'],
-                   edge_model_name=model.model.model_dict['edge_name'],
+                   # node_model_name=model.model.model_dict['node_name'],
+                   # edge_model_name=model.model.model_dict['edge_name'],
                    savepath_adds={'tr': mot_train, 'val': mot_val}
                    )
 
@@ -159,7 +159,7 @@ def train(model,
         epoch_info['avg_error_on_0'].append(zeros_as_ones)
         epoch_info['tracklets'].append(j)
 
-        avg_val_loss_msg = f' |  avg.Val.Loss: {val_loss:.4f})'
+        avg_val_loss_msg = f' |  avg.Val.Loss: {val_loss:.6f})'
 
         val_accs_msg = f" - Accs: " \
                        f"[ 0 ✔ {acc_zeros :.2f} ] [ 1 ✔ {acc_ones :.2f}] " \
@@ -193,13 +193,14 @@ parser.add_argument('-m', '--MOTtrain', default="MOT17",
 parser.add_argument('-M', '--MOTvalidation', default="MOT17",
                     help="MOT dataset on which the single validate is calculated.")
 
-parser.add_argument('-N', '--mp-arch', default="base",
+parser.add_argument('-N', '--mp-arch', default="timeaware",
                     help="Type of message passing architecture."
                          "NB: all layers are time aware"
                          "Available structures:\n"
                          "- timeaware (layer proposed on Neural Solver),\n"
                          "- attention (GATv2Conv),\n"
-                         "- transformer")
+                         "- transformer,\n"
+                         "- original,\n")
 
 parser.add_argument('-B', '--backbone', default="efficientnet_v2_l",
                     help="Visual backbone for nodes feature extraction.")
@@ -214,9 +215,9 @@ parser.add_argument('--apple-silicon', action='store_true',
 parser.add_argument('-Z', '--node-model', action='store_true',
                     help="Use the node model instead of the edge model.")
 
-parser.add_argument('-L', '--loss-function', default="huber",
+parser.add_argument('-L', '--loss-function', default="focal",
                     help="Loss function to use."
-                         "Implemented losses: huber, l1, l2")
+                         "Implemented losses: focal, huber, l1, l2")
 
 parser.add_argument('--epochs', default=1, type=int,
                     help="Number of epochs.")
@@ -325,8 +326,11 @@ diffusion_steps = args.diff_steps
 learning_rate = args.learning_rate
 
 # Loss function
+
 loss_type = args.loss_function
 match loss_type:
+    case 'focal':
+        loss_function = SigmoidFocalLoss(alpha=.05, gamma=3.)
     case 'huber':
         loss_function = F.smooth_l1_loss
     case 'l1':
@@ -340,29 +344,32 @@ match loss_type:
 
 # %% Initialize the Diffusion model and the GNN backbone
 
-network_dict = IMPLEMENTED_MODELS[args.mp_arch]
+gnn = None
 
-gnn = Net(
-    layer_tipe=layer_type,
-    layer_size=l_size,
-    dtype=dtype,
-    mps_fallback=mps_fallback,
-    edge_features_dim=70,
-    heads=heads,
-    concat=False,
-    dropout=args.dropout,
-    add_self_loops=False,
-    steps=messages,
-    diff_steps=diffusion_steps,
-    device=device,
-    model_dict=network_dict,
-    node_features_dim=ImgEncoder.output_dims[backbone],
-    is_edge_model=not args.node_model,
-    used_backbone=backbone)
+if args.mp_arch != 'original':
 
-model = GNN_Diffusion(custom_gnn=gnn,
-                      steps=diffusion_steps,
-                      mps_fallback=True).to(device)
+    network_dict = IMPLEMENTED_MODELS[args.mp_arch]
+
+    gnn = Net(
+        layer_tipe=layer_type,
+        layer_size=l_size,
+        dtype=dtype,
+        mps_fallback=mps_fallback,
+        edge_features_dim=70,
+        heads=heads,
+        concat=False,
+        dropout=args.dropout,
+        add_self_loops=False,
+        steps=messages,
+        diff_steps=diffusion_steps,
+        device=device,
+        model_dict=network_dict,
+        node_features_dim=ImgEncoder.output_dims[backbone],
+        is_edge_model=not args.node_model,
+        used_backbone=backbone)
+
+model = GNN_Diffusion(steps=diffusion_steps,
+                      mps_fallback=mps_fallback).to(device)
 
 optimizer = Adafactor(model.parameters(), lr=learning_rate, relative_step=False)
 

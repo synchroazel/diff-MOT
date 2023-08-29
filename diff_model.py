@@ -337,7 +337,7 @@ class GATv2ConvWithEdgeUpdate(GATv2Conv):
         heads: int = 6,
         **padding_kwargs,
     ):
-        super(GATv2ConvWithEdgeUpdate, self).__init__(node_dim=0,
+        super(GATv2ConvWithEdgeUpdate, self).__init__(# node_dim=0,
                                                       in_channels=in_channels,
                                                       out_channels=out_channels,
                                                       heads=heads,
@@ -742,6 +742,12 @@ IMPLEMENTED_MODELS = {
         'node': GATv2ConvWithEdgeUpdate,
         'edge': BaseEdgeModel,
         'node_name': 'attention',
+        'edge_name': 'base'
+    },
+    'original': {
+        'node': None,
+        'edge': None,
+        'node_name': 'original',
         'edge_name': 'base'
     }
 }

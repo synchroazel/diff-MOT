@@ -100,7 +100,11 @@ def save_model(model: torch.nn.Module,
     # path components
     technique = "classification" if classification else "regression"
     epoch = "Epoch_" + str(epoch)
-    model_name = node_model_name + "_" + edge_model_name
+
+    if node_model_name is not None and edge_model_name is not None:
+        model_name = node_model_name + "_" + edge_model_name
+    else:
+        model_name = "model"
 
     savepath = os.path.normpath(
         os.path.join(
