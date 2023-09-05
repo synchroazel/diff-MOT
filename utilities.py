@@ -97,20 +97,12 @@ def save_model(model: torch.nn.Module,
     if mps_fallback:
         model.to(torch.device('cpu'))
 
-    # path components
-    technique = "classification" if classification else "regression"
-    epoch = "Epoch_" + str(epoch)
-
-    if node_model_name is not None and edge_model_name is not None:
-        model_name = node_model_name + "_" + edge_model_name
-    else:
-        model_name = "model"
+    epoch = "epoch_" + str(epoch)
 
     savepath = os.path.normpath(
         os.path.join(
             savepath,
-            technique,
-            model_name,
+            node_model_name,
             epoch
         )
     )
@@ -191,7 +183,6 @@ def check_sanity(dataloader):
         pass
 
 
-# TODO: add more?
 AVAILABLE_OPTIMIZERS = {
     'AdamW': torch.optim.AdamW,
     'Adam': torch.optim.Adam,
@@ -204,7 +195,7 @@ AVAILABLE_OPTIMIZERS = {
 
 }
 
-# implemented losses
+# Implemented Losses
 IMPLEMENTED_LOSSES = {
     'huber': HuberLoss,
     'bce': BCEWithLogitsLoss,
@@ -229,7 +220,6 @@ MOT17_VALIDATION_TRACKS = {'MOT17-02-SDP': True,
                            'MOT17-09-DPM': True,
                            'MOT17-09-SDP': True,
                            'MOT17-09-FRCNN': True,
-                           'MOT17-13-DPM': False,
-                           'MOT17-13-FRCNN': False,
-                           'MOT17-13-SDP': False,
-                           }
+                           'MOT17-13-DPM': True,
+                           'MOT17-13-FRCNN': True,
+                           'MOT17-13-SDP': True}

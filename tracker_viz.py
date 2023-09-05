@@ -21,53 +21,6 @@ def main(args):
     tracker_dir = f"{args.trackers_folder}/{args.experiment_name}"
     output_folder = f"{args.output_folder}/{args.experiment_name}"
 
-    # match args.experiment:
-    #
-    #     case 'MOT17_private':
-    #         dataset_root = os.path.normpath(f"{args.datapath}/MOT17/train")
-    #         video_folders = ['MOT17-02-DPM', ]
-    #         # 'MOT17-02-FRCNN', 'MOT17-02-SDP',
-    #         # 'MOT17-04-DPM', 'MOT17-04-FRCNN', 'MOT17-04-SDP',
-    #         # 'MOT17-05-DPM', 'MOT17-05-FRCNN', 'MOT17-05-SDP',
-    #         # 'MOT17-09-DPM', 'MOT17-09-FRCNN', 'MOT17-09-SDP',
-    #         # 'MOT17-10-DPM', 'MOT17-10-FRCNN', 'MOT17-10-SDP',
-    #         # 'MOT17-11-DPM', 'MOT17-11-FRCNN', 'MOT17-11-SDP',
-    #         # 'MOT17-13-DPM', 'MOT17-13-FRCNN', 'MOT17-13-SDP', ]
-    #         frames_folder_name = 'img1'
-    #         ground_truth_folder_name = 'gt'
-    #         output_folder = os.path.normpath(os.path.join(args.output_folder, "MOT17/train"))
-    #
-    #         ## !!!
-    #
-    #     case 'MOT20_private':
-    #         dataset_root = os.path.normpath(f"{args.dataset_root}/MOT20/train")
-    #         video_folders = ['MOT20-01', 'MOT20-02', 'MOT20-03', 'MOT20-05']
-    #         frames_folder_name = 'img1'
-    #         output_folder = os.path.normpath(os.path.join(args.output_folder, "MOT20/train"))
-    #
-    #     case 'MOT17_public':
-    #         dataset_root = os.path.normpath(f"{args.dataset_root}/MOT17/train")
-    #         video_folders = ['MOT17-02-DPM', 'MOT17-02-FRCNN', 'MOT17-02-SDP',
-    #                          'MOT17-04-DPM', 'MOT17-04-FRCNN', 'MOT17-04-SDP',
-    #                          'MOT17-05-DPM', 'MOT17-05-FRCNN', 'MOT17-05-SDP',
-    #                          'MOT17-09-DPM', 'MOT17-09-FRCNN', 'MOT17-09-SDP',
-    #                          'MOT17-10-DPM', 'MOT17-10-FRCNN', 'MOT17-10-SDP',
-    #                          'MOT17-11-DPM', 'MOT17-11-FRCNN', 'MOT17-11-SDP',
-    #                          'MOT17-13-DPM', 'MOT17-13-FRCNN', 'MOT17-13-SDP', ]
-    #         frames_folder_name = 'img1'
-    #         ground_truth_folder_name = 'gt'
-    #         output_folder = os.path.normpath(os.path.join(args.output_folder, "MOT17/train"))
-    #
-    #     case 'MOT20_public':
-    #         dataset_root = os.path.normpath(f"{args.dataset_root}/MOT20/train")
-    #         video_folders = ['MOT20-01', 'MOT20-02', 'MOT20-03', 'MOT20-05']
-    #         frames_folder_name = 'img1'
-    #         output_folder = os.path.normpath(os.path.join(args.output_folder, "MOT20/train"))
-    #
-    #     case _:
-    #         print("[ERR] Dataset not yet implemented")
-    #         exit(1)
-
     if not os.path.exists(tracker_dir):
         print(f"[ERROR] Folder {tracker_dir} does not exist")
         exit(1)
@@ -131,16 +84,7 @@ def main(args):
         # Create each frame with bboxes
         frames = set(detection_df['frame'])
 
-        # Initialize video
-        # cpt = "private" if args.experiment.split("_")[-1] == "private" else "public"
-
         video_path = os.path.join(output_folder, f"{track_name}.mp4")
-
-        # if not args.ffmpeg:
-        #     video = cv2.VideoWriter(os.path.normpath(video_path), fourcc, 30.0, (1920, 1080))
-        #
-        # if args.ffmpeg:
-        #     print("[INFO] User chose `--ffmpeg`, video will be created later from frames")
 
         for frame in tqdm(frames, desc=f"[TQDM] Processing frames from track {track_name}"):
 
@@ -214,16 +158,21 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Create a video from MOT test detections')
 
-    parser.add_argument('-d', '--datapath', type=str,
+    parser.add_argument('-d', '--datapath', type=str, default='data',
                         help='path to the dataset root folder')
+
     parser.add_argument('-e', '--experiment_name', type=str,
                         help='name of the experiment (folder containing the tracker file)')
+
     parser.add_argument('-t', '--trackers_folder', type=str, default='trackers',
                         help='path to the trackers folder')
+
     parser.add_argument('-o', '--output_folder', type=str, default='videos',
                         help='path to the output folder in which to save videos')
+
     parser.add_argument('-f', '--fps', type=str, default='30',
                         help='fps of the output video.')
+
     parser.add_argument('-i', '--image_extension', type=str, default='.jpg',
                         help='images extension')
 

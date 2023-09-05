@@ -57,9 +57,12 @@ def test(model,
                                                    node_feats=data.detections,
                                                    edge_index=edge_index)
 
-            pred_edges = torch.where(pred_edges_oh[:, 1] > pred_edges_oh[:, 0], 0., 1.)
+            # pred_edges = torch.where(pred_edges_oh[:, 1] > pred_edges_oh[:, 0], 0., 1.)
 
-            val_loss = loss_function(data.y, pred_edges)
+            pred_edges = torch.nn.Softmax()(pred_edges_oh)
+            pred_edges = torch.where(pred_edges[:, 0] > 0.05, 1., 0.)
+
+            val_loss = loss_function(data.y, pred_edges, reduction='mean').item()
 
             zero_mask = gt_edges <= .5
             one_mask = gt_edges > .5
@@ -69,7 +72,7 @@ def test(model,
             ones_as_zeros = torch.where(pred_edges[one_mask] == 0., 1., 0.).mean().item()
             zeros_as_ones = torch.where(pred_edges[zero_mask] == 1., 1., 0.).mean().item()
 
-            total_val_loss += val_loss.item()
+            total_val_loss += val_loss
             total_0 += acc_zeros
             total_1 += acc_ones
             total_1_0 += ones_as_zeros

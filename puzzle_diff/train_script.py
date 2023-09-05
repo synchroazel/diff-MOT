@@ -13,7 +13,7 @@ import string
 
 import pytorch_lightning as pl
 from dataset.dataset_utils import get_dataset, get_dataset_ROT
-from model import spatial_diffusion as sd
+from model import old_spatial_diffusion as sd
 from pytorch_lightning.callbacks import ModelCheckpoint, ModelSummary
 from pytorch_lightning.loggers import WandbLogger
 

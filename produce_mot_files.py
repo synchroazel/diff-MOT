@@ -55,9 +55,6 @@ validation = args.validation_only
 mot = args.mot
 backbone = args.backbone
 
-if args.diff_steps is not None:
-    model.steps = args.diff_steps
-
 folder = args.detection_folder
 file = args.detection_file
 
@@ -281,7 +278,9 @@ for _, data in tqdm(enumerate(data_loader), desc='[TQDM] Converting tracklet',
                                                node_feats=data.detections,
                                                edge_index=edge_index)
 
-    preds = torch.where(pred_edges_oh[:, 1] > pred_edges_oh[:, 0], 1., 0.)
+    preds = torch.nn.Softmax(dim=1)(pred_edges_oh)
+
+    preds = torch.where(preds[:, 0] > 0.05, 1., 0.)
 
     build_trajectories(data, preds=preds, classification=classification)
 

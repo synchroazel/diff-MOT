@@ -12,6 +12,8 @@ from utilities import *
 
 warnings.filterwarnings("ignore")
 
+device = get_best_device()
+
 
 # %% Function definitions
 
@@ -43,7 +45,7 @@ def train(model,
 
     print('[INFO] Launching training...\n')
 
-    pbar_ep = tqdm(range(epochs), desc='[TQDM] Epoch #1 ', position=0, leave=False,
+    pbar_ep = tqdm(range(1, epochs + 1), desc='[TQDM] Epoch #1 ', position=0, leave=False,
                    bar_format="{desc:<5}{percentage:3.0f}%|{bar}{r_bar}")
 
     average_train_loss, average_val_loss = 1e3, 1e3
@@ -91,7 +93,7 @@ def train(model,
             oh_y = torch.nn.functional.one_hot(data.y.to(torch.int64), -1)
 
             # Diffusion times
-            time = torch.zeros((oh_y.shape[0])).to(device).to(torch.int64)
+            time = torch.randint(0, args.diff_steps, (oh_y.shape[0],)).to(device).to(torch.int64)
 
             # Edge attributes
             edge_attr = data.edge_attr
@@ -102,11 +104,13 @@ def train(model,
             train_loss = model.p_losses(
                 x_start=oh_y,
                 t=time,
-                loss_type=loss_type,
+                loss_type=args.loss_function,
                 node_feats=data.detections,
                 edge_index=edge_index,
                 edge_feats=edge_attr,
             )
+
+            pass
 
             # Backward and optimize
             optimizer.zero_grad()
@@ -114,8 +118,6 @@ def train(model,
             optimizer.step()
 
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=20, error_if_nonfinite=True)
-
-            pbar_dl.update(1)
 
             total_train_loss += train_loss.item()
 
@@ -125,28 +127,18 @@ def train(model,
 
             avg_train_loss_msg = f'avg.Tr.Loss: {average_train_loss:.6f} (last: {train_loss:.6f})'
 
-            pbar_ep.set_description(f'[TQDM] Epoch #{epoch + 1} - {avg_train_loss_msg}{avg_val_loss_msg}{val_accs_msg}')
+            pbar_ep.set_description(f'[TQDM] Epoch #{epoch} - {avg_train_loss_msg}{avg_val_loss_msg}{val_accs_msg}')
 
             j += 1
 
         pbar_ep.set_description(
-            f'[TQDM] Epoch #{epoch + 1} - {avg_train_loss_msg}{avg_val_loss_msg}{val_accs_msg}')
+            f'[TQDM] Epoch #{epoch} - {avg_train_loss_msg}{avg_val_loss_msg}{val_accs_msg}')
 
         """ Validation """
 
         # Only validate n_vals times throughout the training
-        if not epoch % (epochs//n_vals) == 0:
+        if not epoch % (epochs // n_vals) == 0:
             continue
-
-        save_model(model,
-                   mps_fallback=mps_fallback,
-                   classification=classification,
-                   epoch=epoch,
-                   epoch_info=epoch_info,
-                   # node_model_name=model.model.model_dict['node_name'],
-                   # edge_model_name=model.model.model_dict['edge_name'],
-                   savepath_adds={'tr': mot_train, 'val': mot_val}
-                   )
 
         val_loss, acc_ones, acc_zeros, zeros_as_ones, ones_as_zeros = validation(model=model,
                                                                                  val_loader=val_loader,
@@ -158,6 +150,12 @@ def train(model,
         epoch_info['avg_error_on_1'].append(ones_as_zeros)
         epoch_info['avg_error_on_0'].append(zeros_as_ones)
         epoch_info['tracklets'].append(j)
+
+        save_model(model,
+                   mps_fallback=mps_fallback,
+                   classification=True,
+                   epoch=epoch,
+                   epoch_info=epoch_info)
 
         avg_val_loss_msg = f' |  avg.Val.Loss: {val_loss:.6f})'
 
@@ -177,6 +175,8 @@ parser = argparse.ArgumentParser(
     epilog='Es: python diff_train.py',
     formatter_class=argparse.RawTextHelpFormatter)
 
+# ---------------- Paths --------------------------------------------------------------------------------------------- #
+
 parser.add_argument('-D', '--datapath', default="data",  # TODO: remove default
                     help="Path to the folder containing the MOT datasets."
                          "NB: This project assumes a MOT dataset, this project has been tested with MOT17 and MOT20")
@@ -187,42 +187,50 @@ parser.add_argument('--model-savepath', default="saves/models",
 parser.add_argument('--output-savepath', default="saves/outputs",
                     help="Folder where outputs are saved.")
 
+# ---------------- Training and validation logics -------------------------------------------------------------------- #
+
 parser.add_argument('-m', '--MOTtrain', default="MOT17",
                     help="MOT dataset on which the network is trained.")
 
 parser.add_argument('-M', '--MOTvalidation', default="MOT17",
                     help="MOT dataset on which the single validate is calculated.")
 
-parser.add_argument('-N', '--mp-arch', default="timeaware",
-                    help="Type of message passing architecture."
-                         "NB: all layers are time aware"
-                         "Available structures:\n"
-                         "- timeaware (layer proposed on Neural Solver),\n"
-                         "- attention (GATv2Conv),\n"
-                         "- transformer,\n"
-                         "- original,\n")
+parser.add_argument('--n-vals', default=3, type=int,
+                    help="Number of validation steps to execute during training."
+                         "(Validation can be quite expensive, and the model learns slow)")
 
-parser.add_argument('-B', '--backbone', default="efficientnet_v2_l",
-                    help="Visual backbone for nodes feature extraction.")
+parser.add_argument('--detections-file-folder', default="gt",
+                    help="Folder containing the detections file.")
 
-parser.add_argument('--float16', action='store_true',
-                    help="Whether to use half floats or not.")
+parser.add_argument('--detections-file', default="gt.txt",
+                    help="Name of the actual detections file.")
 
-parser.add_argument('--apple-silicon', action='store_true',
-                    help="Whether a Mac with Apple Silicon is in use with MPS acceleration."
-                         "(required for some fallbacks due to lack of MPS support)")
-
-parser.add_argument('-Z', '--node-model', action='store_true',
-                    help="Use the node model instead of the edge model.")
+# ---------------- Main training parameters -------------------------------------------------------------------------- #
 
 parser.add_argument('-L', '--loss-function', default="focal",
                     help="Loss function to use."
                          "Implemented losses: focal, huber, l1, l2")
 
-parser.add_argument('--epochs', default=1, type=int,
+parser.add_argument('--epochs', default=30, type=int,
                     help="Number of epochs.")
 
-parser.add_argument('-n', '--layer-size', default=500, type=int,
+parser.add_argument('-l', '--learning-rate', default=0.001, type=float,
+                    help="Learning rate.")
+
+# ---------------- Architecture choices ------------------------------------------------------------------------------ #
+
+parser.add_argument('-N', '--mp-arch', default="base",
+                    help="Type of message passing architecture."
+                         "NB: all layers are time aware"
+                         "Available structures:\n"
+                         "- base (layer proposed on Neural Solver),\n"
+                         "- attention (GATv2Conv),\n"
+                         "- transformer (TransformerConv)")
+
+parser.add_argument('-B', '--backbone', default="efficientnet_v2_l",
+                    help="Visual backbone for nodes feature extraction.")
+
+parser.add_argument('-n', '--layer-size', default=128, type=int,
                     help="Size of hidden layers")
 
 parser.add_argument('-p', '--messages', default=6, type=int,
@@ -235,20 +243,18 @@ parser.add_argument('--reduction', default="mean",
                     help="Reduction logic for the loss."
                          "Implemented reductions: mean, sum")
 
-parser.add_argument('-l', '--learning-rate', default=0.001, type=float,
-                    help="Learning rate.")
-
-parser.add_argument('-b', '--diff-steps', default=100, type=int,  # todo: change
-                    help="Number of steps of the Diffusion process.")
+parser.add_argument('-Z', '--node-model', action='store_true',
+                    help="Use the node model instead of the edge model.")
 
 parser.add_argument('--dropout', default=0.3, type=float,
                     help="Dropout probability.")
 
-parser.add_argument('--detection-gt-folder', default="gt",
-                    help="Folder containing the ground truth detections files.")
+# ---------------- Diffusion parameters ------------------------------------------------------------------------------ #
 
-parser.add_argument('--detection-gt-file', default="gt.txt",
-                    help="Name of the ground truth detections file.")
+parser.add_argument('-b', '--diff-steps', default=300, type=int,
+                    help="Number of steps of the Diffusion process.")
+
+# ---------------- Graph building parameters ------------------------------------------------------------------------- #
 
 parser.add_argument('--subtrack-len', default=15, type=int,
                     help="Length of the subtrack."
@@ -262,75 +268,32 @@ parser.add_argument('--slide', default=10, type=int,
                     help="Sliding window to adopt during testing."
                          "NB: suggested to be subtrack_len - linkage-window")
 
+# ---------------- Use preprocessed data ----------------------------------------------------------------------------- #
+
 parser.add_argument('--train-preprocessed', action='store_true', default=True,
                     help="Whether to use preprocessed features for train dataloader.")
 
 parser.add_argument('--val-preprocessed', action='store_true', default=True,
                     help="Whether to use preprocessed features for val dataloader.")
 
-parser.add_argument('--n-vals', default=3, type=int,
-                    help="Number of validation steps to execute during training."
-                         "(Validation can be quite expensive, and the model learns slow)")
+# ----------------- Miscellaneous ------------------------------------------------------------------------------------ #
+
+parser.add_argument('--float16', action='store_true',
+                    help="Whether to use half floats or not.")
+
+parser.add_argument('--apple-silicon', action='store_true',
+                    help="Whether a Mac with Apple Silicon is in use with MPS acceleration."
+                         "(required for some fallbacks due to lack of MPS support)")
+
+# -------------------------------------------------------------------------------------------------------------------- #
 
 args = parser.parse_args()
 
-classification = True  # in the Diffusion scenario should always be True
+# %% Set up Loss function
 
-# %% Set up parameters
-
-# Paths
-mot_path = args.datapath
-detections_file_folder = args.detection_gt_folder
-detections_file_name = args.detection_gt_file
-
-# MOT to use
-mot_train = args.MOTtrain
-mot_val = args.MOTvalidation
-n_vals = args.n_vals
-
-# Preprocessed features
-train_preprocessed = args.train_preprocessed
-val_preprocessed = args.val_preprocessed
-
-# Hyperparameters
-backbone = args.backbone
-layer_type = args.mp_arch
-subtrack_len = args.subtrack_len
-slide = args.slide
-linkage_window = args.linkage_window
-messages = args.messages
-l_size = args.layer_size
-epochs = args.epochs
-heads = args.heads
-learning_rate = args.learning_rate
-
-# Dtype to use
-if args.float16:
-    dtype = torch.float16
-else:
-    dtype = torch.float32
-
-# Hyperparameters for graph logic
-subtrack_len = args.subtrack_len
-slide = args.slide
-linkage_window = args.linkage_window
-
-# Device
-device = get_best_device()
-mps_fallback = args.apple_silicon  # args.apple_silicon  # Only if using MPS this should be true
-
-# Diffusion steps
-diffusion_steps = args.diff_steps
-
-# Learning rate
-learning_rate = args.learning_rate
-
-# Loss function
-
-loss_type = args.loss_function
-match loss_type:
+match args.loss_function:
     case 'focal':
-        loss_function = SigmoidFocalLoss(alpha=.05, gamma=3.)
+        loss_function = sigmoid_focal_loss
     case 'huber':
         loss_function = F.smooth_l1_loss
     case 'l1':
@@ -339,98 +302,100 @@ match loss_type:
         loss_function = F.mse_loss
     case _:
         raise NotImplemented(
-            "The chosen loss: " + loss_type + " has not been implemented yet."
-                                              "To see the available ones, run this script with the -h option")
+            "The chosen loss: " + args.loss_function + " is invalid or has not been implemented yet."
+                                                       "To see the available ones, run this script with the -h option")
 
-# %% Initialize the Diffusion model and the GNN backbone
+# %% Initialize the GNN and the Diffusion model
 
-gnn = None
+gnn = Net(
+    layer_tipe=args.mp_arch,
+    layer_size=args.layer_size,
+    dtype=torch.float16 if args.float16 else torch.float32,
+    mps_fallback=args.apple_silicon,
+    edge_features_dim=70,
+    heads=args.heads,
+    concat=False,
+    dropout=args.dropout,
+    add_self_loops=False,
+    steps=3,
+    device=device,
+    model_dict=IMPLEMENTED_MODELS[args.mp_arch],
+    node_features_dim=ImgEncoder.output_dims[args.backbone],
+    is_edge_model=not args.node_model,
+    used_backbone=args.backbone,
+    diff_steps=args.diff_steps
+).to(device)
 
-if args.mp_arch != 'original':
+model = GNN_Diffusion(custom_gnn=gnn,
+                      steps=args.diff_steps,
+                      mps_fallback=args.apple_silicon).to(device)
 
-    network_dict = IMPLEMENTED_MODELS[args.mp_arch]
-
-    gnn = Net(
-        layer_tipe=layer_type,
-        layer_size=l_size,
-        dtype=dtype,
-        mps_fallback=mps_fallback,
-        edge_features_dim=70,
-        heads=heads,
-        concat=False,
-        dropout=args.dropout,
-        add_self_loops=False,
-        steps=messages,
-        diff_steps=diffusion_steps,
-        device=device,
-        model_dict=network_dict,
-        node_features_dim=ImgEncoder.output_dims[backbone],
-        is_edge_model=not args.node_model,
-        used_backbone=backbone)
-
-model = GNN_Diffusion(steps=diffusion_steps,
-                      mps_fallback=mps_fallback).to(device)
-
-optimizer = Adafactor(model.parameters(), lr=learning_rate, relative_step=False)
+optimizer = Adafactor(model.parameters(), lr=args.learning_rate, relative_step=False)
 
 # %% Set up the dataloader
 
-train_dataset_path = os.path.normpath(os.path.join(mot_path, mot_train))
-val_dataset_path = os.path.normpath(os.path.join(mot_path, mot_val))
+train_dataset_path = os.path.normpath(os.path.join(args.datapath, args.MOTtrain))
+val_dataset_path = os.path.normpath(os.path.join(args.datapath, args.MOTvalidation))
 
 mot_train_dl = MotDataset(dataset_path=train_dataset_path,
                           split='train',
-                          subtrack_len=subtrack_len,
-                          slide=slide,
-                          linkage_window=linkage_window,
-                          detections_file_folder=detections_file_folder,
-                          detections_file_name=detections_file_name,
+                          subtrack_len=args.subtrack_len,
+                          slide=args.slide,
+                          linkage_window=args.linkage_window,
+                          detections_file_folder=args.detections_file_folder,
+                          detections_file_name=args.detections_file,
                           dl_mode=True,
                           device=device,
-                          dtype=dtype,
-                          preprocessed=val_preprocessed,
-                          mps_fallback=mps_fallback,
-                          classification=classification,
-                          feature_extraction_backbone=backbone)
+                          dtype=torch.float16 if args.float16 else torch.float32,
+                          preprocessed=args.val_preprocessed,
+                          mps_fallback=args.apple_silicon,
+                          classification=True,
+                          feature_extraction_backbone=args.backbone)
 
 mot_val_dl = MotDataset(dataset_path=val_dataset_path,
                         split='train',
-                        subtrack_len=subtrack_len,
-                        slide=slide,
-                        linkage_window=linkage_window,
-                        detections_file_folder=detections_file_folder,
-                        detections_file_name=detections_file_name,
+                        subtrack_len=args.subtrack_len,
+                        slide=args.slide,
+                        linkage_window=args.linkage_window,
+                        detections_file_folder=args.detections_file_folder,
+                        detections_file_name=args.detections_file,
                         dl_mode=True,
                         device=device,
-                        dtype=dtype,
-                        preprocessed=train_preprocessed,
-                        classification=classification,
-                        mps_fallback=mps_fallback,
-                        feature_extraction_backbone=backbone)
+                        dtype=torch.float16 if args.float16 else torch.float32,
+                        preprocessed=args.train_preprocessed,
+                        classification=True,
+                        mps_fallback=args.apple_silicon,
+                        feature_extraction_backbone=args.backbone)
 
-# Check stored embeddings integrity
-# check_sanity(mot_train_dl)
-# check_sanity(mot_val_dl)
+# Check at which epochs to validate
+val_at = [str(epoch) for epoch in range(1, args.epochs + 1) if epoch % (args.epochs // args.n_vals) == 0]
 
 # Print information
 print("[INFO] Hyperparameters and info:")
 print("\n- Datasets:")
-print("\t- Dataset used for training: " + mot_train + " | validation: " + mot_val)
-print("\t- Subtrack length: " + str(subtrack_len))
-print("\t- Linkage window: " + str(linkage_window))
-print("\t- Sliding window: " + str(slide))
-print("\t- Setting: classification") if classification else print("\t- Setting: regression")
+print("\t- Training on " + args.MOTtrain + "-train")
+print("\t- Validating on " + args.MOTvalidation + "-val")
+print("\t- Saving and validating at epochs " + ", ".join(val_at))
+print("\t- Subtrack length: " + str(args.subtrack_len))
+print("\t- Linkage window: " + str(args.linkage_window))
+print("\t- Sliding window: " + str(args.slide))
 print("\n- GNN backbone:")
-print("\t- Backbone: " + backbone)
-print("\t- Layer type: " + layer_type)
-print("\t- Layer size: " + str(l_size))
-print("\t- Heads: " + str(heads))
-print("\t- Messages: " + str(messages))
-print("\t- Dropout: " + str(args.dropout))
-print("\t- Loss function: " + loss_type)
-print("\n- Using Diffusion with " + str(diffusion_steps) + " steps")
+print("\t- Visual backbone: " + args.backbone)
+print("\t- MP architecture: " + args.mp_arch)
+print("\t- Message passing steps: " + str(args.messages))
+print("\t- Loss function: " + args.loss_function)
+print("\n- Diffusion: ")
+print("\t- Diffusion steps: " + str(args.diff_steps))
 print("")
 
 # %% Train the model
 
-train(model, mot_train_dl, mot_val_dl, n_vals, loss_function, optimizer, epochs, device, mps_fallback)
+train(model,
+      mot_train_dl,
+      mot_val_dl,
+      args.n_vals,
+      loss_function,
+      optimizer,
+      args.epochs,
+      device,
+      args.apple_silicon)

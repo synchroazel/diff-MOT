@@ -20,9 +20,8 @@ Mambaforge-Linux-x86_64.sh
 *.tar
 *.pkl
 
-README_.md
-data/
 .idea/
+data/*
 saves/*
 videos/*
 images/*

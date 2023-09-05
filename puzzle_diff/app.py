@@ -15,7 +15,7 @@ import torch_geometric.data as pyg_data
 import torchvision
 import torchvision.transforms as transforms
 from lightning.app.components.serve import Image, Number, PythonServer, ServeGradio
-from model import spatial_diffusion as sd
+from model import old_spatial_diffusion as sd
 from PIL import Image as PILImage
 from PIL.Image import Resampling
 from torch import Tensor

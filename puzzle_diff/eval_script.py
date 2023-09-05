@@ -13,7 +13,7 @@ import math
 
 import pytorch_lightning as pl
 from dataset.dataset_utils import get_dataset
-from model.spatial_diffusion import GNN_Diffusion
+from model.old_spatial_diffusion import GNN_Diffusion
 from pytorch_lightning.callbacks import ModelCheckpoint, ModelSummary
 from pytorch_lightning.loggers import WandbLogger
 

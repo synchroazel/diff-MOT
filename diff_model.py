@@ -240,7 +240,7 @@ class TransformerConvWithEdgeUpdate(torch_geometric.nn.TransformerConv):
             edge_features = self.__edge_attr__
             self.__edge_attr__ = None
 
-            return out, edge_features, None
+            return out  # , edge_features, None
 
 
 class BaseEdgeModel(torch.nn.Module):
@@ -328,23 +328,23 @@ class TimeAwareNodeModel(torch.nn.Module):
 class GATv2ConvWithEdgeUpdate(GATv2Conv):
 
     def __init__(
-        self,
-        in_channels: int = 256,
-        out_channels: int = 256,
-        dropout: float = .3,
-        agg_base: str = 'mean',
-        n_edge_features: int = EDGE_FEATURES_DIM,
-        heads: int = 6,
-        **padding_kwargs,
+            self,
+            in_channels: int = 256,
+            out_channels: int = 256,
+            dropout: float = .3,
+            agg_base: str = 'mean',
+            n_edge_features: int = EDGE_FEATURES_DIM,
+            heads: int = 6,
+            **padding_kwargs,
     ):
-        super(GATv2ConvWithEdgeUpdate, self).__init__(# node_dim=0,
-                                                      in_channels=in_channels,
-                                                      out_channels=out_channels,
-                                                      heads=heads,
-                                                      dropout=dropout,
-                                                      add_self_loops=False,
-                                                      edge_dim=n_edge_features,
-                                                      fill_value=agg_base)
+        super(GATv2ConvWithEdgeUpdate, self).__init__(  # node_dim=0,
+            in_channels=in_channels,
+            out_channels=out_channels,
+            heads=heads,
+            dropout=dropout,
+            add_self_loops=False,
+            edge_dim=n_edge_features,
+            fill_value=agg_base)
 
         self.concat = False
         self.negative_slope = 0.4
@@ -382,7 +382,8 @@ class GATv2ConvWithEdgeUpdate(GATv2Conv):
                 x: Union[Tensor, PairTensor],
                 edge_index: Adj,
                 edge_attr: OptTensor = None,
-                return_attention_weights: bool = None):
+                return_attention_weights: bool = None,
+                u=None, batch=None):
 
         # £ type: (Union[Tensor, PairTensor], Tensor, OptTensor, NoneType) -> Tensor  # noqa
         # £ type: (Union[Tensor, PairTensor], SparseTensor, OptTensor, NoneType) -> Tensor  # noqa
@@ -444,7 +445,7 @@ class GATv2ConvWithEdgeUpdate(GATv2Conv):
 
             edge_attr = self.__edge_attr__
             self.__edge_attr__ = None
-            return out, edge_attr, None
+            return out  # , edge_attr, None
 
     def message(self, x_j: Tensor, x_i: Tensor, edge_attr: OptTensor,
                 index: Tensor, ptr: OptTensor,
@@ -613,7 +614,9 @@ class Net(torch.nn.Module):
         self.time_emb = nn.Embedding(diff_steps, 32)
 
         self.pos_mlp = nn.Sequential(
-            nn.Linear(2, 16), nn.GELU(), nn.Linear(16, 32)
+            nn.Linear(2, 16),
+            nn.GELU(),
+            nn.Linear(16, 32)
         )
 
         self.mlp = nn.Sequential(
@@ -663,20 +666,18 @@ class Net(torch.nn.Module):
             return self.predictor(x_i, x_j)
 
     def forward_with_feats(self,
-                           xy_pos,
-                           time,
-                           patch_rgb,
-                           edge_index,
+                           x_noisy,
+                           t,
                            node_feats,
-                           patch_feats,
-                           batch,
                            edge_feats,
-                           mp_fallback):
+                           edge_index,
+                           batch):
+
         """
         Compatibility layer for Spatial Diffusion code.
         """
-        return self.forward_for_diff(oh_y=xy_pos,
-                                     time=time,
+        return self.forward_for_diff(oh_y=x_noisy,
+                                     time=t,
                                      edge_index=edge_index,
                                      edge_attr=edge_feats,
                                      node_attr=node_feats)
@@ -722,14 +723,14 @@ class Net(torch.nn.Module):
         backbone = "backbone-" + self.used_backbone
         messages = 'messages-' + str(self.number_of_message_passing_layers)
         name = '_'.join([model_type, node_model, edge_model, layer_size, backbone, messages])
-        return name
+        return self.model_dict['node_name']
 
 
 IMPLEMENTED_MODELS = {
-    'timeaware': {
+    'base': {
         'node': TimeAwareNodeModel,
         'edge': BaseEdgeModel,
-        'node_name': 'timeaware',
+        'node_name': 'base_timeaware',
         'edge_name': 'base'
     },
     'transformer': {
@@ -742,12 +743,6 @@ IMPLEMENTED_MODELS = {
         'node': GATv2ConvWithEdgeUpdate,
         'edge': BaseEdgeModel,
         'node_name': 'attention',
-        'edge_name': 'base'
-    },
-    'original': {
-        'node': None,
-        'edge': None,
-        'node_name': 'original',
         'edge_name': 'base'
     }
 }
