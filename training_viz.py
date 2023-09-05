@@ -10,6 +10,7 @@ matplotlib.use('Agg')  # fixes matplotlib memory leak
 
 plt.rc('font', family='serif')
 
+
 def plot_training(avg_train_losses, epoch, save_folder, exp_name):
     plt.figure(figsize=(7, 5))
     plt.plot(avg_train_losses, label="Training Loss")
@@ -35,7 +36,9 @@ def plot_training(avg_train_losses, epoch, save_folder, exp_name):
     plt.savefig(save_path, dpi=400)
     plt.close()
 
-def plot_validation(avg_accuracy_on_0, avg_accuracy_on_1, avg_error_on_0, avg_error_on_1, epochs, save_folder, exp_name):
+
+def plot_validation(avg_accuracy_on_0, avg_accuracy_on_1, avg_error_on_0, avg_error_on_1, epochs, save_folder,
+                    exp_name):
     plt.figure(figsize=(7, 5))
     plt.plot(epochs, avg_accuracy_on_0, label="Accuracy on 0s")
     plt.scatter(epochs, avg_accuracy_on_0, s=10)
@@ -67,7 +70,6 @@ def plot_validation(avg_accuracy_on_0, avg_accuracy_on_1, avg_error_on_0, avg_er
     )
     plt.savefig(save_path, dpi=400)
     plt.close()
-
 
 
 if __name__ == '__main__':

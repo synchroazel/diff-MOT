@@ -2,12 +2,11 @@ import argparse
 import warnings
 
 from torch_geometric.transforms import ToDevice
-from torchvision.ops import sigmoid_focal_loss
 
-from diff_model import *
-from diff_motclass import MotDataset
-from diff_test import test
+from model import *
+from motclass import MotDataset
 from puzzle_diff.model.spatial_diffusion import *
+from test import test
 from utilities import *
 
 warnings.filterwarnings("ignore")
@@ -172,7 +171,7 @@ def train(model,
 parser = argparse.ArgumentParser(
     prog='python train.py',
     description='Script for training a graph network on the MOT task, integrating Diffusion.',
-    epilog='Es: python diff_train.py',
+    epilog='Es: python train.py',
     formatter_class=argparse.RawTextHelpFormatter)
 
 # ---------------- Paths --------------------------------------------------------------------------------------------- #

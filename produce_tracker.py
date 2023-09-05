@@ -4,12 +4,11 @@ from collections import OrderedDict
 import pandas
 import torchvision
 from torch_geometric.transforms import ToDevice
-from tqdm import tqdm
 
 from motclass import MotDataset
 from utilities import *
-from utilities import get_best_device
 from utilities import custom_load_pkl
+from utilities import get_best_device
 
 device = get_best_device()
 
@@ -261,7 +260,7 @@ for _, data in tqdm(enumerate(data_loader), desc='[TQDM] Converting tracklet',
                                              'z'])
 
     if validation_only and (
-            (cur_track_name not in MOT17_VALIDATION_TRACKS) and (cur_track_name not in MOT20_VALIDATION_TRACKS)):
+        (cur_track_name not in MOT17_VALIDATION_TRACKS) and (cur_track_name not in MOT20_VALIDATION_TRACKS)):
         continue
 
     data = ToDevice(device.type)(data)

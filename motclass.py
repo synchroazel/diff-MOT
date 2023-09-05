@@ -3,7 +3,6 @@ from PIL import Image
 from torch.utils.data import Dataset
 from torchvision import transforms
 from torchvision.ops import box_convert
-from tqdm import tqdm
 
 from model import ImgEncoder
 from utilities import *
