@@ -5,7 +5,7 @@ from torch_geometric.transforms import ToDevice
 
 from model import *
 from motclass import MotDataset
-from puzzle_diff.model.spatial_diffusion import *
+from diffusion import *
 from test import test
 from utilities import *
 
